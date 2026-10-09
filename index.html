@@ -1,0 +1,1360 @@
+<title>Elo de Arpejos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Schibsted+Grotesk:wght@400;500;700&display=swap">
+<style>
+/* Layout: coluna única — ajustes, sequência de cifras (em letra de caderno de jazz), placar e o braço do violão como palco */
+:root{
+  --bg:#eceef1; --surface:#f6f7f9; --raise:#ffffff; --fg:#1a1e26; --muted:#58616f; --line:#d3d8e0;
+  --accent:#9c4f17; --accent-fg:#ffffff; --bad:#bb3131;
+  --a1:#11897b; --a2:#b16f06; --a3:#bb3a66; --a4:#3868c0;
+  --font-body:"Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-chart:"Kalam", "Marker Felt", "Comic Sans MS", cursive;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121519; --surface:#191d23; --raise:#20252d; --fg:#e6e9ee; --muted:#99a2af; --line:#2e343e;
+    --accent:#e39352; --accent-fg:#1a1208; --bad:#ff7d72;
+    --a1:#49d1bf; --a2:#f4b54d; --a3:#f27ea5; --a4:#86b4ff; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121519; --surface:#191d23; --raise:#20252d; --fg:#e6e9ee; --muted:#99a2af; --line:#2e343e;
+  --accent:#e39352; --accent-fg:#1a1208; --bad:#ff7d72;
+  --a1:#49d1bf; --a2:#f4b54d; --a3:#f27ea5; --a4:#86b4ff; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-body); font-size:15px; line-height:1.45; padding-inline:16px; padding-block:20px 40px}
+.wrap{max-width:1560px; margin:0 auto; display:grid; gap:18px}
+header{display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 16px}
+h1{font-family:var(--font-chart); font-size:clamp(30px,5vw,42px); line-height:1; margin:0; letter-spacing:.2px}
+header p{margin:0; color:var(--muted); max-width:62ch}
+
+.settings{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px 22px; padding:16px; background:var(--surface); border:1px solid var(--line); border-radius:12px}
+.field{display:grid; gap:6px; align-content:start; min-width:0}
+.lbl{font-size:11.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); font-weight:500}
+.seg{display:flex; flex-wrap:wrap; width:fit-content; max-width:100%; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--raise)}
+.seg button{flex:none; border:0; border-right:1px solid var(--line); background:transparent; color:var(--fg); font:inherit; font-size:14px; padding:6px 11px; min-width:36px; cursor:pointer; font-variant-numeric:tabular-nums}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--fg); color:var(--bg)}
+select{font:inherit; font-size:14px; color:var(--fg); background:var(--raise); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:100%}
+.row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+.check{display:flex; align-items:center; gap:8px; font-size:14px}
+input[type=range]{width:140px; accent-color:var(--accent)}
+.hint-txt{font-size:12.5px; color:var(--muted)}
+
+.seqhead{display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:8px}
+.seqhead h2{font-size:13px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin:0; font-weight:500}
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px}
+.card{--c:var(--a1); background:var(--raise); border:1px solid var(--line); border-radius:10px; padding:12px 14px; display:grid; gap:8px; min-width:0; transition:border-color .6s ease, box-shadow .6s ease}
+.card.active{border-color:var(--c); box-shadow:0 0 0 2px var(--c)}
+.card.arrive{animation:arrive 1.4s ease}
+@keyframes arrive{0%{transform:translateY(0)} 25%{transform:translateY(-4px)} 100%{transform:translateY(0)}}
+.card-top{display:flex; align-items:center; gap:10px}
+.ord{font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
+.sw{width:12px; height:12px; border-radius:50%; background:var(--c); flex:none}
+.sym{font-family:var(--font-chart); font-size:34px; line-height:1.05; color:var(--fg); background:none; border:0; padding:0; cursor:pointer; text-align:left}
+.sym:hover{color:var(--c)}
+.tones{display:grid; grid-template-columns:repeat(4,1fr); gap:4px; font-variant-numeric:tabular-nums}
+.tones div{display:grid; text-align:center; font-size:14px; font-weight:500}
+.tones small{font-size:12px; color:var(--muted); font-weight:400}
+.pips{display:flex; gap:5px; min-height:10px}
+.pips i{width:10px; height:10px; border-radius:50%; border:1.5px solid var(--c); transition:background .35s ease}
+.pips i.on{background:var(--c)}
+.pick{display:flex; gap:6px; flex-wrap:wrap}
+.pick select{flex:1 1 80px}
+
+.bar{display:flex; flex-wrap:wrap; align-items:center; gap:12px 22px; padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:12px}
+.status{flex:1 1 320px; min-width:0}
+#main{font-size:19px; font-weight:500}
+#main .chart{font-family:var(--font-chart); font-size:24px; font-weight:700}
+#sub{color:var(--muted); min-height:1.45em}
+#sub.warn{color:var(--bad)}
+.breath{height:4px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:8px; opacity:0; transition:opacity .4s ease}
+.breath.show{opacity:1}
+.breath i{display:block; height:100%; width:0; background:var(--cur,var(--accent))}
+.stats{display:flex; gap:18px; font-variant-numeric:tabular-nums}
+.stat{display:grid}
+.stat b{font-size:18px}
+.stat span{font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+.btns{display:flex; gap:8px}
+.btn{font:inherit; font-weight:500; font-size:15px; border-radius:9px; padding:9px 16px; cursor:pointer; border:1px solid var(--line); background:var(--raise); color:var(--fg)}
+.btn.primary{background:var(--accent); color:var(--accent-fg); border-color:var(--accent)}
+.btn:disabled{opacity:.45; cursor:default}
+button:focus-visible, select:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+.neck{position:relative; background:#1b1714; border-radius:14px; padding:10px 8px 6px; overflow-x:auto; overscroll-behavior-x:contain}
+.neck svg{display:block; width:100%; min-width:0; height:auto; user-select:none; -webkit-user-select:none; touch-action:manipulation}
+/* Celular: braço em escala de instrumento, de ponta a ponta; a vista acompanha a nota em jogo */
+@media (pointer: coarse) and (max-width: 1024px){
+  .neck{margin-inline:-16px; border-radius:0; padding:8px 0 4px; scrollbar-width:none}
+  .neck::-webkit-scrollbar{display:none}
+  .neck svg{width:auto; min-width:0; height:clamp(250px, 64svh, 380px)}
+}
+.hit{fill:transparent; cursor:pointer}
+@media (hover: hover){ .hit:hover{fill:rgba(255,255,255,.07)} }
+.dot text, .fxl text{font-family:var(--font-body); font-weight:700; pointer-events:none}
+#help, #trail, #dots, #fx{pointer-events:none}
+.pulse{animation:pulse 1.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center}
+@keyframes pulse{0%,100%{transform:scale(1); opacity:1} 50%{transform:scale(1.22); opacity:.55}}
+.ripple{animation:ripple .9s ease-out forwards; transform-box:fill-box; transform-origin:center}
+@keyframes ripple{from{transform:scale(1); opacity:.9} to{transform:scale(2.1); opacity:0}}
+.miss{animation:miss 1s ease-out forwards}
+@keyframes miss{0%{opacity:1} 60%{opacity:1} 100%{opacity:0}}
+#play{display:grid; gap:18px}
+/* Tela de jogo no celular: ocupa a tela toda e fica deitada; em pé, gira 90° para você segurar o celular de lado */
+body.stage{overflow:hidden}
+body.stage #play{position:fixed; top:0; left:0; width:100vw; height:100vh; height:100dvh; z-index:50; background:#1b1714;
+  display:flex; flex-direction:column; gap:0; padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+#turnStage, #flipNut, #flipStr{display:none}
+body.stage #turnStage, body.stage #flipNut, body.stage #flipStr{display:inline-block; padding-inline:9px}
+body.stage.turn #play{transform:rotate(180deg); transform-origin:50% 50%}
+@media (orientation: portrait){
+  body.stage #play{width:100vh; height:100vw; transform:translateY(100vh) rotate(-90deg); transform-origin:0 0}
+  body.stage.turn #play{transform:translateX(100vw) rotate(90deg); transform-origin:0 0}
+}
+body.stage .bar{flex:none; flex-wrap:nowrap; border:0; border-radius:0; padding:6px 12px; gap:12px}
+body.stage .status{flex:1 1 auto}
+body.stage #main{font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+body.stage #main .chart{font-size:19px}
+body.stage #sub{font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:0}
+body.stage .breath{margin-top:4px}
+body.stage .stats{gap:12px}
+body.stage .stat b{font-size:14px}
+body.stage .stat span{font-size:9.5px}
+body.stage .btn{padding:6px 11px; font-size:14px}
+body.stage .neck{flex:1 1 auto; min-height:0; margin:0; border-radius:0; padding:4px 0}
+body.stage .neck svg{height:100%; width:auto; min-width:0}
+.foot{font-size:12.5px; color:var(--muted); max-width:80ch}
+@media (prefers-reduced-motion: reduce){
+  .pulse,.ripple,.card.arrive{animation:none}
+  .card,.pips i,.breath{transition:none}
+}
+.drillpanel{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px 22px; padding:16px; background:var(--surface); border:1px solid var(--line); border-radius:12px}
+.chips{display:flex; flex-wrap:wrap; gap:6px}
+.chip{display:grid; justify-items:center; font:inherit; min-width:58px; padding:6px 10px; border:1px solid var(--line); border-radius:9px; background:var(--raise); color:var(--fg); cursor:pointer; line-height:1.15}
+.chip b{font-size:16px}
+.chip small{font-size:12px; color:var(--muted)}
+.chip[aria-pressed="true"]{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent)}
+body:not(.drill) .drill-only{display:none !important}
+body.drill .game-only{display:none !important}
+body:not(.oct) .oct-only{display:none !important}
+body.oct #hintBtn{display:none}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Elo de Arpejos</h1>
+    <p>Conecte tétrades no braço até a casa 15. Cada nota tocada soa e mostra sua sílaba Kodály para você cantar junto.</p>
+  </header>
+
+  <section class="settings" aria-label="Ajustes">
+    <div class="field"><span class="lbl">Modo</span><div class="seg" id="sMode"></div><span class="hint-txt" id="modeHint"></span></div>
+    <div class="field"><span class="lbl">Arpejos na rodada</span><div class="seg" id="sCount"></div></div>
+    <div class="field"><span class="lbl">Notas por arpejo</span><div class="seg" id="sNotes"></div></div>
+    <div class="field"><span class="lbl">Voltas</span><div class="seg" id="sLaps"></div></div>
+    <div class="field"><span class="lbl">Respiro na troca</span><div class="seg" id="sBreath"></div></div>
+    <div class="field">
+      <span class="lbl">Progressão e tonalidade</span>
+      <div class="row"><select id="preset" aria-label="Progressão"></select><select id="key" aria-label="Tonalidade"></select></div>
+      <div class="row"><button class="btn" id="shuffle" type="button" style="padding:5px 12px;font-size:14px">Sortear na tonalidade</button></div>
+    </div>
+    <div class="field"><span class="lbl">Sílabas</span><div class="seg" id="sDo"></div><span class="hint-txt" id="doHint"></span></div>
+    <div class="field"><span class="lbl">Caminho no braço</span><div class="seg" id="sTrail"></div><span class="hint-txt">O caminho completo aparece ao fim da rodada.</span></div>
+    <div class="field"><span class="lbl">Região do braço</span>
+      <div class="row"><label class="check">Da casa <select id="winLo" aria-label="Primeira casa"></select></label><label class="check">até <select id="winHi" aria-label="Última casa"></select></label></div>
+      <span class="hint-txt" id="winHint"></span></div>
+    <div class="field"><span class="lbl">Braço na tela</span><div class="seg" id="sNut"></div><div class="seg" id="sStr"></div><span class="hint-txt">Guardado separado para celular e computador.</span></div>
+    <div class="field"><span class="lbl">Marcas do braço</span><div class="seg" id="sInlay"></div><div class="seg" id="sNums"></div><span class="hint-txt">Bolinhas de casa e números das casas.</span></div>
+    <div class="field"><span class="lbl">Ajuda no braço</span><div class="seg" id="sHelp"></div></div>
+    <div class="field"><span class="lbl">Entrada</span><div class="seg" id="sInput"></div><span class="hint-txt">Microfone: o app ouve o seu instrumento. Use fones, senão ele ouve o próprio som.</span></div>
+    <div class="field">
+      <span class="lbl">Som</span><div class="seg" id="sVoice"></div>
+      <label class="check"><input type="checkbox" id="chordToggle" checked> Tocar o acorde na troca</label>
+      <label class="check">Volume <input type="range" id="vol" min="0" max="1" step="0.05" value="0.8"></label>
+    </div>
+  </section>
+
+  <section class="drillpanel drill-only" aria-label="Reforço: acordes e nota">
+    <div class="field"><span class="lbl">Acorde 1 (mesmo arpejo)</span><div class="pick"><select id="d1Root" aria-label="Fundamental do acorde 1"></select><select id="d1Type" aria-label="Tipo do acorde 1"></select></div></div>
+    <div class="field"><span class="lbl">Acorde 2 (próximo arpejo)</span><div class="pick"><select id="d2Root" aria-label="Fundamental do acorde 2"></select><select id="d2Type" aria-label="Tipo do acorde 2"></select></div></div>
+    <div class="field"><span class="lbl">Nota de partida (do acorde 1)</span><div class="chips" id="dNotes"></div><span class="hint-txt" id="dNoteHint"></span></div>
+    <div class="field oct-only"><span class="lbl">Repetições</span><div class="seg" id="oReps"></div><span class="hint-txt">Quantas vezes passar por todas as posições da nota.</span></div>
+    <div class="field oct-only"><span class="lbl">Sentido da troca</span><div class="seg" id="oDir"></div><span class="hint-txt">Frente: para a nota mais aguda do acorde 2. Trás: mais grave.</span></div>
+  </section>
+  <section style="display:grid;gap:10px" aria-label="Sequência">
+    <div class="seqhead"><h2>Sequência</h2><span class="hint-txt">Depois do último, volta ao 1º. Toque na cifra para ouvir o acorde.</span></div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <div id="play">
+  <section class="bar" aria-live="polite">
+    <div class="status">
+      <div id="main">Pronto para começar</div>
+      <div id="sub"></div>
+      <div class="breath" id="breath"><i></i></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="stLap">–</b><span id="lblLap">Volta</span></div>
+      <div class="stat"><b id="stNotes">0</b><span id="lblNotes">Notas</span></div>
+      <div class="stat"><b id="stErr">0</b><span id="lblErr">Erros</span></div>
+      <div class="stat"><b id="stClock">0:00</b><span id="lblClock">Tempo</span></div>
+    </div>
+    <div class="btns">
+      <button class="btn" id="hintBtn" type="button" disabled>Dica</button>
+      <button class="btn" id="turnStage" type="button" title="Girar a tela de jogo 180°" aria-label="Girar a tela de jogo 180°">↻</button>
+      <button class="btn" id="flipNut" type="button" title="Trocar o lado da pestana" aria-label="Trocar o lado da pestana">⇆</button>
+      <button class="btn" id="flipStr" type="button" title="Inverter a ordem das cordas" aria-label="Inverter a ordem das cordas">⇅</button>
+      <button class="btn" id="exitStage" type="button" hidden>Sair</button>
+      <button class="btn primary" id="go" type="button">Começar</button>
+    </div>
+  </section>
+
+  <div class="neck"><svg id="board" viewBox="0 0 1200 262" role="img" aria-label="Braço do violão, afinação padrão, casas 0 a 15"></svg></div>
+  </div>
+
+  <p class="foot">Regra: dentro de um arpejo, cada nota vai ao tom vizinho do mesmo arpejo, logo acima ou logo abaixo. Na troca, vá ao tom mais próximo do arpejo seguinte, acima ou abaixo, sem repetir a nota, mesmo que ela seja comum aos dois. Vale a altura exata (oitava), em qualquer corda.</p>
+</div>
+
+<script>
+(() => {
+/* =========================================================
+   REGISTRO DE ARPEJOS — para adicionar um novo tipo, inclua
+   uma entrada aqui. Cada tom é [passo de letra, semitons]
+   a partir da fundamental (passo 2 = terça, 4 = quinta, 6 = sétima…).
+   O motor do jogo aceita qualquer quantidade de tons.
+   ========================================================= */
+const ARPEGGIO_TYPES = [
+  { id:'maj7',   nome:'7M (maior com 7ª maior)',     cifra:'7M',      tons:[[0,0],[2,4],[4,7],[6,11]] },
+  { id:'dom7',   nome:'7 (dominante)',               cifra:'7',       tons:[[0,0],[2,4],[4,7],[6,10]] },
+  { id:'m7',     nome:'m7 (menor com 7ª)',           cifra:'m7',      tons:[[0,0],[2,3],[4,7],[6,10]] },
+  { id:'m7b5',   nome:'m7(♭5) (meio-diminuto)',      cifra:'m7(♭5)',  tons:[[0,0],[2,3],[4,6],[6,10]] },
+  { id:'dim7',   nome:'° (diminuto)',                cifra:'°',       tons:[[0,0],[2,3],[4,6],[6,9]] },
+  { id:'mMaj7',  nome:'m(7M) (menor com 7ª maior)',  cifra:'m(7M)',   tons:[[0,0],[2,3],[4,7],[6,11]] },
+  { id:'maj7s5', nome:'7M(♯5) (aumentado)',          cifra:'7M(♯5)',  tons:[[0,0],[2,4],[4,8],[6,11]] },
+  { id:'7sus4',  nome:'7(4) (dominante suspenso)',   cifra:'7(4)',    tons:[[0,0],[3,5],[4,7],[6,10]] },
+];
+const TYPE = Object.fromEntries(ARPEGGIO_TYPES.map(t => [t.id, t]));
+
+/* Progressões prontas: [grau da escala maior (0 = I), tipo, alteração da fundamental em semitons] */
+const PRESETS = [
+  { id:'251',  nome:'ii – V – I',               graus:[[1,'m7'],[4,'dom7'],[0,'maj7']] },
+  { id:'1625', nome:'I – vi – ii – V',          graus:[[0,'maj7'],[5,'m7'],[1,'m7'],[4,'dom7']] },
+  { id:'3625', nome:'iii – VI7 – ii – V',       graus:[[2,'m7'],[5,'dom7'],[1,'m7'],[4,'dom7']] },
+  { id:'251m', nome:'ii – V – i (relativa menor)', graus:[[6,'m7b5'],[2,'dom7'],[5,'mMaj7']] },
+  { id:'dimp', nome:'I – ♯i° – ii – V',         graus:[[0,'maj7'],[0,'dim7',1],[1,'m7'],[4,'dom7']] },
+  { id:'blues',nome:'I7 – IV7',                 graus:[[0,'dom7'],[3,'dom7']] },
+  { id:'14',   nome:'I – IV',                   graus:[[0,'maj7'],[3,'maj7']] },
+];
+const DIAT = ['maj7','m7','m7','maj7','dom7','m7','m7b5'];
+
+/* ---------- teoria ---------- */
+const LETTERS = 'CDEFGAB', NAT = [0,2,4,5,7,9,11];
+const ACC = { '-2':'𝄫', '-1':'♭', '0':'', '1':'♯', '2':'𝄪' };
+const norm = a => ((((a % 12) + 18) % 12) - 6);
+const pcOf = (L, a) => (((NAT[L] + a) % 12) + 12) % 12;
+const nameOf = (L, a) => LETTERS[L] + (ACC[a] ?? '');
+function spell(L, a, step, semi){
+  const L2 = (L + step) % 7, pc = (((NAT[L] + a + semi) % 12) + 12) % 12;
+  return { L:L2, acc:norm(pc - NAT[L2]), pc };
+}
+const ROOTS = [[0,0],[0,1],[1,-1],[1,0],[1,1],[2,-1],[2,0],[3,0],[3,1],[4,-1],[4,0],[4,1],[5,-1],[5,0],[5,1],[6,-1],[6,0]];
+const KEYS  = [[0,0],[4,0],[1,0],[5,0],[2,0],[6,0],[3,1],[1,-1],[5,-1],[2,-1],[6,-1],[3,0]];
+
+/* Sílabas Kodály (dó móvel), com cromatismos pela grafia */
+const SYL = ['do','re','mi','fa','so','la','ti'];
+const UP  = ['di','ri',null,'fi','si','li',null];
+const DN  = [null,'ra','me',null,'se','le','te'];
+const CHR = ['do','di','re','me','mi','fa','fi','so','si','la','te','ti'];
+function syllable(t, ref){
+  const d = (t.L - ref.L + 7) % 7, semis = (((t.pc - ref.pc) % 12) + 12) % 12, alt = norm(semis - NAT[d]);
+  if (alt === 0) return SYL[d];
+  if (alt === 1 && UP[d]) return UP[d];
+  if (alt === -1 && DN[d]) return DN[d];
+  return CHR[semis];
+}
+
+/* Dó fixo: do = C sempre; sílaba pela letra da nota, com o acidente da grafia (fa♯, si♭) */
+const FIX = ['do','re','mi','fa','sol','la','si'];
+function sylFor(t, arp){
+  if (cfg.doMode === 'fixed') return fixSyl(t);
+  return syllable(t, cfg.doMode === 'key' ? keyRef() : arp.rootRef);
+}
+
+/* Dó fixo: a sílaba segue a grafia da nota, mas se a grafia cai numa nota natural de mesma altura (E# = fá, B# = dó, Fb = mi, Cb = si) usa o nome dessa nota */
+function fixSyl(t){
+  const d = t.L, acc = t.acc;
+  if (acc === 0) return FIX[d];
+  if (acc === 1 && UP[d]) return UP[d];
+  if (acc === -1 && DN[d]) return DN[d];
+  const semis = (((NAT[d] + acc) % 12) + 12) % 12, e = NAT.indexOf(semis);
+  if (e >= 0) return FIX[e];
+  return FIX[d] + (ACC[acc] ?? '');
+}
+function buildArp(slot, i){
+  const T = TYPE[slot.type];
+  const tones = T.tons.map(([st, se]) => spell(slot.L, slot.a, st, se));
+  return { i, slot, type:T, tones, pcs:new Set(tones.map(t => t.pc)),
+           label:nameOf(slot.L, slot.a) + T.cifra, rootRef:{ L:slot.L, pc:pcOf(slot.L, slot.a) } };
+}
+
+/* ---------- braço ---------- */
+const OPEN = [40,45,50,55,59,64];           // E2 A2 D3 G3 B3 E4
+const FRETS = 15, MIN = 40, MAX = 64 + FRETS;
+const G = { left:40, x0:98, xEnd:1184, top:34, sp:36 };
+const fx = [G.x0];
+for (let f = 1; f <= FRETS; f++){
+  const tru = (1 - 2 ** (-f/12)) / (1 - 2 ** (-FRETS/12)), lin = f / FRETS;
+  fx[f] = G.x0 + (G.xEnd - G.x0) * (0.55 * tru + 0.45 * lin);
+}
+/* No celular o braço fica como o guitarrista o vê de cima: corda E grave no alto, pestana à direita */
+const mobileView = matchMedia('(pointer: coarse) and (max-width: 1024px)');
+/* Orientação do braço: lado da pestana e corda de cima, escolhidos pelo usuário (padrão diferente no celular) */
+const view = { nutRight:false, lowTop:false };
+const viewKey = () => mobileView.matches ? 'elo-view-m' : 'elo-view-d';
+function loadView(){
+  const def = mobileView.matches ? { nutRight:true, lowTop:true } : { nutRight:false, lowTop:false };
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(viewKey()) || 'null'); } catch (e) {}
+  Object.assign(view, def, saved || {});
+}
+function saveView(){ try { localStorage.setItem(viewKey(), JSON.stringify(view)); } catch (e) {} }
+loadView();
+const rawNoteX = f => f === 0 ? (G.left + G.x0) / 2 + 4 : (fx[f-1] + fx[f]) / 2;
+const noteX = f => view.nutRight ? 1200 - rawNoteX(f) : rawNoteX(f);
+const strY  = s => G.top + (view.lowTop ? s : 5 - s) * G.sp;
+const positionsOf = m => { const r = []; for (let s = 0; s < 6; s++){ const f = m - OPEN[s]; if (f >= 0 && f <= FRETS) r.push({ s, f }); } return r; };
+/* Região do braço escolhida: só valem as notas tocáveis entre as casas cfg.lo e cfg.hi */
+const inWin = f => f >= cfg.lo && f <= cfg.hi;
+/* Abertura: uma casa além de cada borda da região também vale (dedo esticado). Com ela, toda altura
+   entre a nota mais grave e a mais aguda da região tem posição, e a nota mais próxima é sempre a de verdade. */
+const inReach = f => f >= cfg.lo - 1 && f <= cfg.hi + 1;
+const positionsIn = m => positionsOf(m).filter(p => inWin(p.f));
+const positionsReach = m => { const a = positionsIn(m); return a.length ? a : positionsOf(m).filter(p => inReach(p.f)); };
+const lowest = () => Math.min(...OPEN.map(o => o + cfg.lo));
+const highest = () => Math.max(...OPEN.map(o => o + cfg.hi));
+const playable = m => m >= lowest() && m <= highest() && positionsReach(m).length > 0;
+const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
+
+/* ---------- estado ---------- */
+const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
+              chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click' };
+try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; } } catch (e) {}
+function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input })); } catch (e) {} }
+let g = newGame();
+function newGame(){ return { phase:'idle', arps:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false,
+                             startMidi:null, startPos:null, errors:0, hints:0, t0:null, t1:null,
+                             breathUntil:0, hintUntil:0, flash:null, msg:null }; }
+
+const keyRef = () => { const [L, a] = KEYS[cfg.keyIdx]; return { L, pc:pcOf(L, a) }; };
+function degreeRoot(d, alt = 0){
+  const [kL, kA] = KEYS[cfg.keyIdx], L = (kL + d) % 7;
+  const pc = pcOf(kL, kA) + NAT[d] + alt;
+  return { L, a:norm(pc - NAT[L]) };
+}
+function slotsFromPreset(id){
+  const p = PRESETS.find(x => x.id === id);
+  return p.graus.map(([d, type, alt]) => ({ ...degreeRoot(d, alt || 0), type }));
+}
+function randomDiatonic(n){
+  const ds = [0,1,2,3,4,5,6].sort(() => Math.random() - .5).slice(0, n);
+  return ds.map(d => ({ ...degreeRoot(d), type:DIAT[d] }));
+}
+cfg.slots = slotsFromPreset(cfg.preset);
+
+/* ---------- áudio: corda dedilhada (Karplus-Strong, afinação exata) ---------- */
+let ctx = null, master = null;
+const cache = new Map();
+function ensureAudio(){
+  if (!ctx){
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = cfg.vol;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+    const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 3;
+    master.connect(lp); lp.connect(comp); comp.connect(ctx.destination);
+  }
+  if (ctx.state === 'suspended') ctx.resume();
+}
+function pluckBuffer(midi, t60){
+  const k = midi + ':' + t60;
+  if (cache.has(k)) return cache.get(k);
+  const f = 440 * 2 ** ((midi - 69) / 12), sr = ctx.sampleRate;
+  const N = Math.max(2, Math.floor(sr / f - 0.5)), fAct = sr / (N + 0.5);
+  const len = Math.floor(sr * Math.min(t60 + 0.3, 3.8));
+  const buf = ctx.createBuffer(1, len, sr), d = buf.getChannelData(0);
+  const ring = new Float32Array(N);
+  let prev = 0, mean = 0;
+  for (let i = 0; i < N; i++){ prev += (Math.random() * 2 - 1 - prev) * 0.55; ring[i] = prev; mean += prev; }
+  mean /= N; for (let i = 0; i < N; i++) ring[i] -= mean;
+  const decay = Math.pow(0.001, 1 / (fAct * t60));
+  let idx = 0, peak = 1e-6;
+  for (let i = 0; i < len; i++){
+    const nx = idx + 1 === N ? 0 : idx + 1;
+    d[i] = ring[idx];
+    ring[idx] = (ring[idx] + ring[nx]) * 0.5 * decay;
+    idx = nx;
+    const v = Math.abs(d[i]); if (v > peak) peak = v;
+  }
+  const fadeN = Math.floor(sr * 0.08);
+  for (let i = 0; i < len; i++){ d[i] /= peak; if (i > len - fadeN) d[i] *= (len - i) / fadeN; }
+  const out = { buf, rate:f / fAct };
+  cache.set(k, out);
+  return out;
+}
+/* Voz cantada: dente de serra com vibrato, filtrada nas vogais (formantes); a altura é exata */
+const VOICE = {
+  do:['d','o'], di:['d','I'], re:['r','e'], ri:['r','I'], ra:['r','A'], me:['m','E'], mi:['m','i'],
+  fa:['f','a'], fi:['f','I'], so:['s','o'], sol:['s','o'], se:['s','E'], la:['l','a'], li:['l','I'], le:['l','E'],
+  si:['s','i'], ti:['t','i'], te:['t','E']
+};
+const VOWEL = { a:[730,1090,2440], e:[530,1840,2480], i:[270,2290,3010], o:[570,840,2410], E:[400,2100,2800], I:[400,1950,2600], A:[620,1200,2500] };
+let noiseBuf = null;
+function sing(midi, syl, { gain = 0.5, delay = 0, t60 = 2 } = {}){
+  /* A voz canta sempre numa oitava natural (C3 a B3); a classe da nota e a sílaba não mudam */
+  while (midi > 59) midi -= 12;
+  while (midi < 48) midi += 12;
+  let [on, v] = VOICE[syl] || ['l','a'];
+  if (syl === 'si' && midi % 12 === 8) v = 'I';   /* G# (si) é sustenido: vogal mais aberta */
+  const sr = ctx.sampleRate, t0 = ctx.currentTime + delay;
+  const dur = Math.min(1.4, Math.max(0.5, t60 * 0.5)), f0 = 440 * 2 ** ((midi - 69) / 12);
+  const fric = on === 'f' || on === 's', stop = on === 'd' || on === 't';
+  const vowStart = t0 + (fric ? 0.11 : stop ? 0.035 : 0.04);
+  const out = ctx.createGain(); out.connect(master);
+  out.gain.setValueAtTime(0, t0);
+  out.gain.linearRampToValueAtTime(gain * 0.9, vowStart + 0.03);
+  out.gain.setValueAtTime(gain * 0.9, t0 + dur - 0.12);
+  out.gain.linearRampToValueAtTime(0, t0 + dur);
+  const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = f0;
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2;
+  const lfoG = ctx.createGain(); lfoG.gain.value = f0 * 0.007; lfo.connect(lfoG); lfoG.connect(osc.frequency);
+  /* Agudo: as formantes sobem junto com a nota, o filtro fica mais largo e o brilho é cortado; sem isso soa como trompete */
+  const hi = Math.min(1, Math.max(0, (f0 - 260) / 300));
+  const brightCut = ctx.createBiquadFilter(); brightCut.type = 'lowpass'; brightCut.frequency.value = 3200 - 1100 * hi;
+  brightCut.connect(out);
+  const vowels = ctx.createGain(); vowels.gain.value = 4; vowels.connect(brightCut);
+  VOWEL[v].forEach((fq, i) => {
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = i === 0 ? Math.max(fq, f0 * 1.1) : fq * (1 - 0.12 * hi); bp.Q.value = 4 - 1.5 * hi;
+    const g = ctx.createGain(); g.gain.value = [1, 0.55, 0.3][i];
+    osc.connect(bp); bp.connect(g); g.connect(vowels);
+  });
+  /* formante de brilho (cantor): 3,3 kHz, em todas as vogais */
+  const ring = ctx.createBiquadFilter(); ring.type = 'bandpass'; ring.frequency.value = 3300; ring.Q.value = 3;
+  const ringG = ctx.createGain(); ringG.gain.value = 0.15;
+  osc.connect(ring); ring.connect(ringG); ringG.connect(vowels);
+  /* sopro: um pouco de ruído filtrado que segue o envelope da vogal */
+  if (!noiseBuf){ noiseBuf = ctx.createBuffer(1, sr * 0.3, sr); const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; }
+  const br = ctx.createBufferSource(); br.buffer = noiseBuf; br.loop = true;
+  const brF = ctx.createBiquadFilter(); brF.type = 'bandpass'; brF.frequency.value = 2000; brF.Q.value = 0.8;
+  const brG = ctx.createGain(); brG.gain.value = 0.05;
+  br.connect(brF); brF.connect(brG); brG.connect(out);
+  br.start(t0); br.stop(t0 + dur + 0.1);
+  osc.start(t0); lfo.start(t0); osc.stop(t0 + dur + 0.1); lfo.stop(t0 + dur + 0.1);
+  if (fric || stop){
+    if (!noiseBuf){ noiseBuf = ctx.createBuffer(1, sr * 0.3, sr); const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; }
+    const ns = ctx.createBufferSource(); ns.buffer = noiseBuf;
+    const nf = ctx.createBiquadFilter();
+    nf.type = on === 's' ? 'highpass' : 'bandpass';
+    nf.frequency.value = on === 's' ? 4500 : on === 'f' ? 1800 : on === 't' ? 3000 : 2400;
+    nf.Q.value = fric ? 0.8 : 1.5;
+    const ng = ctx.createGain(), len = fric ? 0.11 : 0.035;
+    ng.gain.setValueAtTime(stop ? 0.5 : 0.35, t0); ng.gain.linearRampToValueAtTime(0, t0 + len);
+    ns.connect(nf); nf.connect(ng); ng.connect(master);
+    ns.start(t0); ns.stop(t0 + len + 0.05);
+  }
+}
+function playNote(midi, { gain = 0.7, delay = 0, t60 = 3.2, syl = null } = {}){
+  if (!ctx) return;
+  if (cfg.voice && syl){ sing(midi, syl, { gain, delay, t60 }); return; }
+  const { buf, rate } = pluckBuffer(midi, t60);
+  const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+  const gn = ctx.createGain(); gn.gain.value = gain;
+  src.connect(gn); gn.connect(master);
+  src.start(ctx.currentTime + delay);
+}
+/* Nota que o próprio jogador produziu (clique ou instrumento): no modo microfone não toca de novo */
+function userNote(midi, opts){ if (cfg.input !== 'mic') playNote(midi, opts); }
+function playChord(arp, delay = 0){
+  if (!ctx) return;
+  const ms = arp.tones.map(t => 52 + (((t.pc - 52) % 12) + 12) % 12).sort((a, b) => a - b);
+  ms.forEach((m, i) => playNote(m, { gain:0.26, delay:delay + i * 0.05, t60:2.6 }));
+}
+
+/* Microfone: detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima */
+function yin(x, sr){
+  const W = 1024, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
+  let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
+  rms = Math.sqrt(rms / W);
+  if (rms < 0.012) return null;
+  const d = new Float32Array(tMax + 1);
+  for (let tau = 1; tau <= tMax; tau++){ let sum = 0; for (let i = 0; i < W; i++){ const df = x[i] - x[i + tau]; sum += df * df; } d[tau] = sum; }
+  const dp = new Float32Array(tMax + 1); dp[0] = 1; let run = 0;
+  for (let tau = 1; tau <= tMax; tau++){ run += d[tau]; dp[tau] = run ? d[tau] * tau / run : 1; }
+  let tau = -1;
+  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.15){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
+  if (tau < 1) return null;
+  const a = dp[tau - 1], b = dp[tau], c = dp[tau + 1], den = 2 * (a - 2 * b + c);
+  const shift = den ? (a - c) / den : 0;
+  return { f: sr / (tau + shift), conf: 1 - b };
+}
+let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = null, micCnt = 0, micLast = null, micSilent = 0, micLastF = null;
+async function startMic(){
+  ensureAudio();
+  if (micStream) return;
+  try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:false, autoGainControl:false } }); }
+  catch (e) { flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
+  const src = ctx.createMediaStreamSource(micStream);
+  micAn = ctx.createAnalyser(); micAn.fftSize = 2048; src.connect(micAn);
+  micBuf = new Float32Array(micAn.fftSize);
+  micTimer = setInterval(micTick, 30);
+}
+function stopMic(){
+  if (micTimer) clearInterval(micTimer);
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null;
+}
+function micNote(m){
+  const ps = positionsIn(m);
+  if (!ps.length){ flash('Essa nota está fora da região escolhida.', false, 900); return; }
+  const p = micLastF == null ? ps[0] : ps.reduce((a, b) => Math.abs(b.f - micLastF) < Math.abs(a.f - micLastF) ? b : a);
+  micLastF = p.f;
+  onPick(p.s, p.f);
+}
+function micTick(){
+  const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
+  if (!playing || !micAn){ micCand = null; micCnt = 0; micLast = null; return; }
+  micAn.getFloatTimeDomainData(micBuf);
+  const r = yin(micBuf, ctx.sampleRate);
+  if (!r){ micCand = null; micCnt = 0; if (++micSilent >= 3) micLast = null; return; }
+  micSilent = 0;
+  const m = Math.round(69 + 12 * Math.log2(r.f / 440));
+  if (m !== micCand){ micCand = m; micCnt = 1; return; }
+  if (++micCnt === 3 && m !== micLast){ micLast = m; micNote(m); }
+}
+
+/* ---------- lógica do jogo ---------- */
+function computeTargets(){
+  if (!g.path.length) return [g.startMidi];
+  const last = g.path[g.path.length - 1].midi, arp = g.arps[g.arpIdx];
+  const out = [];
+  for (let m = last + 1; m <= MAX; m++) if (arp.pcs.has(m % 12) && playable(m)){ out.push(m); break; }
+  for (let m = last - 1; m >= MIN; m--) if (arp.pcs.has(m % 12) && playable(m)){ out.push(m); break; }
+  return out;
+}
+function start(){
+  ensureAudio();
+  g = newGame();
+  g.phase = 'play';
+  g.arps = cfg.slots.map(buildArp);
+  const a0 = g.arps[0];
+  const pool = []; for (let m = MIN; m <= MAX; m++) if (a0.pcs.has(m % 12) && playable(m)) pool.push(m);
+  g.startMidi = pool[Math.floor(Math.random() * pool.length)];
+  const ps = positionsIn(g.startMidi);
+  g.startPos = ps[Math.floor(Math.random() * ps.length)];
+  g.targets = computeTargets();
+  if (cfg.chord) playChord(a0, 0.1);
+  enterStage();
+  renderAll();
+  requestAnimationFrame(() => {
+    if (coarse.matches && !document.body.classList.contains('stage')){
+      const r = neck.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > innerHeight) neck.scrollIntoView({ block:'center', behavior:reduceMotion.matches ? 'auto' : 'smooth' });
+    }
+    focusFret(g.startPos.f, true);
+  });
+}
+function stop(msg){
+  g = newGame(); g.msg = msg || null;
+  renderAll();
+}
+function toneOf(arp, midi){ return arp.tones.find(t => t.pc === midi % 12); }
+function flash(text, warn = true, ms = 2200){
+  g.flash = { text, warn, until:performance.now() + ms };
+  renderStatus();
+  setTimeout(renderStatus, ms + 30);
+}
+function onPick(s, f){
+  if (appMode === 'drill'){ drillPick(s, f); return; }
+  if (appMode === 'oct'){ octPick(s, f); return; }
+  if (g.phase !== 'play') return;
+  const midi = OPEN[s] + f, now = performance.now();
+  if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
+  if (now < g.breathUntil){ flash('Um instante: a troca libera em seguida.', false, 900); return; }
+  if (g.targets.includes(midi)) correct(s, f, midi); else wrong(s, f, midi);
+}
+function correct(s, f, midi){
+  const arp = g.arps[g.arpIdx], t = toneOf(arp, midi);
+  g.path.push({ s, f, midi, arp:g.arpIdx, trans:g.trans, syl:sylFor(t, arp), name:nameOf(t.L, t.acc) });
+  g.trans = false;
+  if (!g.t0) g.t0 = performance.now();
+  userNote(midi, { syl: g.path[g.path.length - 1].syl });
+  ripple(s, f, BOARD_COL[g.arpIdx]);
+  focusFret(f, false);
+  g.count++;
+  g.flash = null;
+  if (g.count >= cfg.notes){
+    if (cfg.laps && g.lap >= cfg.laps && g.arpIdx === g.arps.length - 1){ finish(); return; }
+    beginTransition();
+  } else {
+    g.targets = computeTargets();
+  }
+  renderAll();
+}
+function beginTransition(){
+  g.arpIdx = (g.arpIdx + 1) % g.arps.length;
+  if (g.arpIdx === 0) g.lap++;
+  g.count = 0; g.trans = true;
+  g.targets = computeTargets();
+  g.breathUntil = performance.now() + cfg.breath;
+  if (cfg.chord) playChord(g.arps[g.arpIdx], 0.45);
+  const card = document.querySelector(`.card[data-i="${g.arpIdx}"]`);
+  if (card){ card.classList.remove('arrive'); void card.offsetWidth; card.classList.add('arrive'); }
+  runBreathBar();
+  if (cfg.breath) setTimeout(renderAll, cfg.breath + 20);
+}
+function wrong(s, f, midi){
+  g.errors++;
+  userNote(midi, { gain:0.45, t60:0.14 });
+  missFx(s, f);
+  const arp = g.arps[g.arpIdx];
+  const nm = (() => { const t = toneOf(arp, midi); if (t) return nameOf(t.L, t.acc);
+    return ['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'][midi % 12]; })();
+  if (!g.path.length) flash(`Comece pela nota marcada no braço.`);
+  else if (!arp.pcs.has(midi % 12)) flash(`${nm} não pertence a ${arp.label}.`);
+  else flash(`${nm} está em ${arp.label}, mas não é o vizinho mais próximo nessa altura.`);
+  renderStats();
+}
+function finish(){
+  g.phase = 'done'; g.t1 = performance.now();
+  g.targets = [];
+  renderAll();
+}
+
+/* ---------- desenho do braço ---------- */
+const svg = document.getElementById('board');
+function staticBoard(){
+  const yT = G.top - 18, yB = G.top + 5 * G.sp + 18, midY = G.top + 2.5 * G.sp;
+  const mob = view.nutRight, mir = mob ? 'transform="matrix(-1 0 0 1 1200 0)"' : '';
+  let s = `<defs><linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#4b3021"/><stop offset=".5" stop-color="#3a2418"/><stop offset="1" stop-color="#2b1911"/></linearGradient></defs><g ${mir}>`;
+  s += `<rect x="${G.x0}" y="${yT}" width="${G.xEnd - G.x0 + 10}" height="${yB - yT}" fill="url(#wood)" rx="3"/>`;
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 26; i++){
+    const y = yT + 4 + rnd() * (yB - yT - 8);
+    s += `<path d="M${G.x0} ${y.toFixed(1)} Q ${600 + rnd()*300} ${(y + (rnd()-.5)*10).toFixed(1)} ${G.xEnd + 10} ${(y + (rnd()-.5)*6).toFixed(1)}" stroke="#1d110b" stroke-opacity="${(0.15 + rnd()*0.25).toFixed(2)}" stroke-width="${(0.6 + rnd()).toFixed(1)}" fill="none"/>`;
+  }
+  if (cfg.inlays) {
+  for (const f of [3,5,7,9,15]) s += `<circle cx="${rawNoteX(f)}" cy="${midY}" r="6.5" fill="#e9e2d3" fill-opacity=".8"/>`;
+  s += `<circle cx="${rawNoteX(12)}" cy="${midY - G.sp}" r="6.5" fill="#e9e2d3" fill-opacity=".8"/><circle cx="${rawNoteX(12)}" cy="${midY + G.sp}" r="6.5" fill="#e9e2d3" fill-opacity=".8"/>`;
+  }
+  for (let f = 1; f <= FRETS; f++){
+    s += `<line x1="${fx[f]}" y1="${yT}" x2="${fx[f]}" y2="${yB}" stroke="#9f9a90" stroke-width="3.2"/>`;
+    s += `<line x1="${fx[f] - .6}" y1="${yT}" x2="${fx[f] - .6}" y2="${yB}" stroke="#ecE9e2" stroke-width="1"/>`;
+  }
+  s += `<rect x="${G.x0 - 7}" y="${yT - 2}" width="8" height="${yB - yT + 4}" fill="#e8dfc8" rx="1.5"/>`;
+  const W = [2.7,2.2,1.8,1.4,1.1,0.9], names = ['E','A','D','G','B','e'];
+  for (let st = 0; st < 6; st++){
+    const y = strY(st);
+    s += `<line x1="${G.left + 6}" y1="${y}" x2="${G.xEnd + 10}" y2="${y}" stroke="${st < 3 ? '#c9ae80' : '#ddd9d0'}" stroke-width="${W[st]}"/>`;
+  }
+  const dim = (a, b) => `<rect x="${a}" y="${yT - 4}" width="${b - a}" height="${yB - yT + 8}" fill="#0c0907" fill-opacity=".66"/>`;
+  const xl = f => f <= 0 ? G.left - 8 : fx[f - 1] + 1.6, xr = f => f >= FRETS ? G.xEnd + 12 : fx[f] - 1.6;
+  if (cfg.lo > 1) s += dim(G.left - 8, xl(cfg.lo - 1));
+  if (cfg.lo > 0) s += dim(xl(cfg.lo - 1), xl(cfg.lo)).replace('fill-opacity=".66"', 'fill-opacity=".3"');
+  if (cfg.hi < FRETS - 1) s += dim(xr(cfg.hi + 1), G.xEnd + 12);
+  if (cfg.hi < FRETS) s += dim(xr(cfg.hi), xr(cfg.hi + 1)).replace('fill-opacity=".66"', 'fill-opacity=".3"');
+  s += `</g>`;
+  for (let st = 0; st < 6; st++)
+    s += `<text x="${mob ? 1186 : 14}" y="${strY(st) + 4.5}" text-anchor="${mob ? 'end' : 'start'}" font-size="13" fill="#a99d8c" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="500">${names[st]}</text>`;
+  const marks = new Set([3,5,7,9,12,15]);
+  for (let f = 0; f <= FRETS; f++)
+    s += (cfg.fretNums === '12' && f !== 12) ? '' : `<text x="${noteX(f)}" y="${yB + 22}" text-anchor="middle" font-size="12" fill="${!inReach(f) ? '#4a423a' : !inWin(f) ? '#857a6c' : marks.has(f) ? '#d9cfbe' : '#6f665b'}" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="${marks.has(f) ? 700 : 400}">${f}</text>`;
+  s += `<g id="help"></g><g id="trail"></g><g id="dots"></g><g id="fx"></g><g id="hits" ${mir}>`;
+  for (let st = 0; st < 6; st++) for (let f = 0; f <= FRETS; f++){
+    const xL = f === 0 ? G.left - 20 : fx[f-1] + 2, xR = f === 0 ? G.x0 - 2 : fx[f] - 2;
+    s += `<rect class="hit" data-s="${st}" data-f="${f}" x="${xL}" y="${strY(st) - G.sp/2}" width="${xR - xL}" height="${G.sp}" rx="6"/>`;
+  }
+  s += `</g>`;
+  svg.innerHTML = s;
+}
+let L_help, L_trail, L_dots, L_fx;
+function buildBoard(){
+  staticBoard();
+  L_help = svg.querySelector('#help'); L_trail = svg.querySelector('#trail'); L_dots = svg.querySelector('#dots'); L_fx = svg.querySelector('#fx');
+}
+buildBoard();
+mobileView.addEventListener('change', () => { loadView(); buildBoard(); renderBoard(); if (typeof renderSettings === 'function') renderSettings(); });
+function setView(k, v){ view[k] = v; saveView(); buildBoard(); renderBoard(); renderSettings(); refocus(); }
+/* No toque, a nota só conta no "click" (que não dispara quando o dedo arrasta o braço) */
+let lastPointer = 'mouse';
+function pickFrom(e){
+  const r = e.target.closest('.hit'); if (!r) return;
+  onPick(+r.dataset.s, +r.dataset.f);
+}
+svg.addEventListener('pointerdown', e => {
+  lastPointer = e.pointerType;
+  if (e.pointerType !== 'mouse') return;
+  if (e.target.closest('.hit')) e.preventDefault();
+  pickFrom(e);
+});
+svg.addEventListener('click', e => { if (lastPointer !== 'mouse') pickFrom(e); });
+
+/* Close no braço: centraliza a casa pedida; depois só rola quando a nota chega perto da borda */
+const neck = document.querySelector('.neck');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const coarse = matchMedia('(pointer: coarse)');
+function focusFret(f, center){
+  if (neck.scrollWidth <= neck.clientWidth + 2) return;
+  const cs = getComputedStyle(neck), pl = parseFloat(cs.paddingLeft) || 0, pr = parseFloat(cs.paddingRight) || 0;
+  const w = neck.scrollWidth - pl - pr;
+  const x = pl + noteX(f) * w / 1200;
+  const cw = neck.clientWidth, sl = neck.scrollLeft;
+  if (center || x < sl + cw * 0.22 || x > sl + cw * 0.78)
+    neck.scrollTo({ left:Math.max(0, x - cw / 2), behavior:reduceMotion.matches ? 'auto' : 'smooth' });
+}
+/* Tenta tela cheia + trava em paisagem (Android/Chrome); onde o navegador recusa, a tela de jogo gira sozinha */
+function enterStage(){
+  if (!mobileView.matches) return;
+  document.body.classList.add('stage');
+  $('exitStage').hidden = false;
+  try {
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen){
+      el.requestFullscreen({ navigationUI:'hide' })
+        .then(() => screen.orientation && screen.orientation.lock ? screen.orientation.lock('landscape') : null)
+        .catch(() => {});
+    }
+  } catch (e) {}
+}
+function exitStage(){
+  document.body.classList.remove('stage');
+  $('exitStage').hidden = true;
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+  try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) {}
+}
+function refocus(){
+  if (g.phase === 'idle') return;
+  const last = g.path[g.path.length - 1];
+  const f = last ? last.f : g.startPos && g.startPos.f;
+  if (f != null) setTimeout(() => focusFret(f, true), 120);
+}
+addEventListener('resize', refocus);
+addEventListener('orientationchange', refocus);
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('stage')) exitStage(); refocus(); });
+
+function ripple(s, f, col){
+  const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  c.setAttribute('cx', noteX(f)); c.setAttribute('cy', strY(s)); c.setAttribute('r', 14);
+  c.setAttribute('fill', 'none'); c.setAttribute('stroke', col); c.setAttribute('stroke-width', 2.5);
+  c.setAttribute('class', 'ripple'); L_fx.appendChild(c);
+  setTimeout(() => c.remove(), 950);
+}
+function missFx(s, f){
+  const x = noteX(f), y = strY(s);
+  const gEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  gEl.setAttribute('class', 'miss fxl');
+  gEl.innerHTML = `<circle cx="${x}" cy="${y}" r="13" fill="#2a1410" stroke="#ff6f63" stroke-width="2.5"/>
+    <path d="M${x-5} ${y-5} L${x+5} ${y+5} M${x+5} ${y-5} L${x-5} ${y+5}" stroke="#ff8a80" stroke-width="2.4" stroke-linecap="round"/>`;
+  L_fx.appendChild(gEl);
+  setTimeout(() => gEl.remove(), 1050);
+}
+
+function renderBoard(){
+  if (appMode === 'drill'){ renderDrillBoard(); return; }
+  if (appMode === 'oct'){ renderOctBoard(); return; }
+  let h = '', t = '', d = '';
+  const now = performance.now();
+  if (g.phase === 'play'){
+    const col = BOARD_COL[g.arpIdx], arp = g.arps[g.arpIdx];
+    if (cfg.help === 'arp'){
+      for (let m = MIN; m <= MAX; m++) if (arp.pcs.has(m % 12))
+        for (const p of positionsIn(m)) h += `<circle cx="${noteX(p.f)}" cy="${strY(p.s)}" r="10" fill="none" stroke="${col}" stroke-opacity=".6" stroke-width="1.6"/>`;
+    }
+    if (cfg.help === 'alvos' || now < g.hintUntil){
+      for (const m of g.targets) for (const p of positionsReach(m))
+        h += `<circle cx="${noteX(p.f)}" cy="${strY(p.s)}" r="16" fill="${col}" fill-opacity=".2" stroke="${col}" stroke-width="2" stroke-dasharray="4 3"/>`;
+    }
+  }
+  const mode = g.phase === 'done' ? 'full' : cfg.trail;
+  const win = cfg.notes * Math.max(1, cfg.slots.length);
+  const vis = mode === 'full' ? g.path.slice(-2 * win) : mode === 'last' ? g.path.slice(-1) : [];
+  const n = g.path.length, off = n - vis.length;
+  const op = k => (n - 1 - (off + k)) < win ? 1 : 0.22;
+  for (let k = 1; k < vis.length; k++){
+    const a = vis[k-1], b = vis[k];
+    t += `<line x1="${noteX(a.f)}" y1="${strY(a.s)}" x2="${noteX(b.f)}" y2="${strY(b.s)}" stroke="${BOARD_COL[b.arp]}" stroke-width="3" stroke-linecap="round" stroke-opacity="${op(k) * 0.9}" ${b.trans ? 'stroke-dasharray="7 6"' : ''}/>`;
+  }
+  vis.forEach((e, k) => {
+    const x = noteX(e.f), y = strY(e.s), o = op(k);
+    d += `<g class="dot" opacity="${o}"><circle cx="${x}" cy="${y}" r="14" fill="${BOARD_COL[e.arp]}" stroke="#1b1714" stroke-width="1.5"/>
+      <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="${e.syl.length > 3 ? 10.5 : 12.5}" fill="#1b120b">${e.syl}</text></g>`;
+  });
+  if (vis.length && g.phase !== 'idle'){
+    const e = vis[vis.length - 1];
+    d += `<circle cx="${noteX(e.f)}" cy="${strY(e.s)}" r="19" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>`;
+  }
+  if (g.phase === 'play' && !g.path.length && g.startPos){
+    const x = noteX(g.startPos.f), y = strY(g.startPos.s), c = BOARD_COL[0];
+    d += `<circle class="pulse" cx="${x}" cy="${y}" r="15" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="2.5"/>
+      <circle cx="${x}" cy="${y}" r="5" fill="${c}"/>
+      <text x="${x}" y="${y - 22}" text-anchor="middle" font-size="11.5" fill="#f3ead9" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="700">comece</text>`;
+  }
+  L_help.innerHTML = h; L_trail.innerHTML = t; L_dots.innerHTML = d;
+}
+
+/* ---------- interface ---------- */
+const $ = id => document.getElementById(id);
+function seg(id, opts, get, set){
+  const el = $(id);
+  el.innerHTML = opts.map((o, i) => `<button type="button" data-i="${i}" aria-pressed="${get() === o.v}">${o.t}</button>`).join('');
+  el.onclick = e => { const b = e.target.closest('button'); if (!b) return; set(opts[+b.dataset.i].v); renderSettings(); };
+}
+function changed(){ if (appMode !== 'game'){ if (dr.phase !== 'idle') drillStop('Ajustes alterados. Toque em Começar.'); else renderAll(); return; } if (g.phase !== 'idle') stop('Ajustes alterados. Toque em Começar para uma nova rodada.'); else renderAll(); }
+
+function renderSettings(){
+  seg('sInlay', [{v:true,t:'Com bolinhas'},{v:false,t:'Sem bolinhas'}], () => cfg.inlays, v => { cfg.inlays = v; saveBoard(); buildBoard(); renderAll(); });
+  seg('sNums', [{v:'all',t:'Todas as casas'},{v:'12',t:'Só a 12'}], () => cfg.fretNums, v => { cfg.fretNums = v; saveBoard(); buildBoard(); renderAll(); });
+  seg('sInput', [{v:'click',t:'Clique'},{v:'mic',t:'Microfone'}], () => cfg.input, v => { cfg.input = v; saveBoard(); if (v === 'click') stopMic(); renderAll(); });
+  seg('sVoice', [{v:false,t:'Instrumento'},{v:true,t:'Voz'}], () => cfg.voice, v => { cfg.voice = v; saveBoard(); renderAll(); });
+  seg('sMode', [{v:'game',t:'Jogo'},{v:'drill',t:'Reforço'},{v:'oct',t:'Oitavas'}], () => appMode, v => setMode(v));
+  $('modeHint').textContent = appMode === 'oct' ? 'Oitavas: ordem fixa. Passa por todas as posições da nota do acorde 1, de agudo a grave, e pergunta a troca para o acorde 2.' : appMode === 'drill' ? 'Reforço: escolha dois acordes e uma nota do primeiro; o jogo faz as 4 perguntas e troca a nota.' : 'Jogo: conecte as notas dos arpejos em sequência.';
+  seg('sCount', [2,3,4].map(v => ({ v, t:v })), () => cfg.count, v => { setCount(v); changed(); });
+  seg('sNotes', [2,3,4,5,6,7,8].map(v => ({ v, t:v })), () => cfg.notes, v => { cfg.notes = v; changed(); });
+  seg('sLaps', [{v:1,t:'1'},{v:2,t:'2'},{v:4,t:'4'},{v:0,t:'∞'}], () => cfg.laps, v => { cfg.laps = v; changed(); });
+  seg('sBreath', [{v:0,t:'0 s'},{v:800,t:'0,8 s'},{v:1200,t:'1,2 s'},{v:2000,t:'2 s'}], () => cfg.breath, v => { cfg.breath = v; changed(); });
+  seg('sDo', [{v:'fixed',t:'Dó fixo'},{v:'key',t:'Móvel (tom)'},{v:'root',t:'Móvel (fund.)'}], () => cfg.doMode, v => { cfg.doMode = v; changed(); });
+  seg('sTrail', [{v:'none',t:'Oculto'},{v:'last',t:'Só a última'},{v:'full',t:'Completo'}], () => cfg.trail, v => { cfg.trail = v; renderBoard(); });
+  const opts = (a, b, v) => Array.from({ length:b - a + 1 }, (_, k) => a + k).map(n => `<option value="${n}" ${n === v ? 'selected' : ''}>${n}</option>`).join('');
+  $('winLo').innerHTML = opts(0, FRETS - 3, cfg.lo);
+  $('winHi').innerHTML = opts(3, FRETS, cfg.hi);
+  $('winHint').textContent = 'A nota inicial sai da região. Vale também 1 casa além de cada borda (abertura), para a nota mais próxima ser sempre a verdadeira.';
+  seg('sNut', [{v:false,t:'Pestana à esq.'},{v:true,t:'Pestana à dir.'}], () => view.nutRight, v => setView('nutRight', v));
+  seg('sStr', [{v:true,t:'Grave em cima'},{v:false,t:'Aguda em cima'}], () => view.lowTop, v => setView('lowTop', v));
+  seg('sHelp', [{v:'none',t:'Nenhuma'},{v:'arp',t:'Arpejo'},{v:'alvos',t:'Alvos'}], () => cfg.help, v => { cfg.help = v; renderBoard(); });
+  $('doHint').textContent = cfg.doMode === 'fixed' ? 'do = C sempre; acidentes pela grafia do acorde (fa♯, si♭).'
+    : cfg.doMode === 'key' ? `do = ${nameOf(...KEYS[cfg.keyIdx])}, a tônica escolhida.` : 'do = fundamental de cada acorde.';
+}
+function setCount(n){
+  if (n < cfg.slots.length) cfg.slots = cfg.slots.slice(0, n);
+  else {
+    const has = s => cfg.slots.some(x => pcOf(x.L, x.a) === pcOf(s.L, s.a) && x.type === s.type);
+    let guard = 0;
+    while (cfg.slots.length < n && guard++ < 50){
+      const d = Math.floor(Math.random() * 7), s = { ...degreeRoot(d), type:DIAT[d] };
+      if (!has(s)) cfg.slots.push(s);
+    }
+  }
+  cfg.count = n; cfg.preset = 'custom';
+  $('preset').value = 'custom';
+}
+
+function initSelects(){
+  $('preset').innerHTML = PRESETS.map(p => `<option value="${p.id}">${p.nome}</option>`).join('') + `<option value="custom">Personalizada</option>`;
+  $('preset').value = cfg.preset;
+  $('key').innerHTML = KEYS.map(([L, a], i) => `<option value="${i}">Tom: ${nameOf(L, a)}</option>`).join('');
+  $('key').value = cfg.keyIdx;
+  $('preset').onchange = e => {
+    cfg.preset = e.target.value;
+    if (cfg.preset !== 'custom'){ cfg.slots = slotsFromPreset(cfg.preset); cfg.count = cfg.slots.length; }
+    renderSettings(); changed();
+  };
+  $('key').onchange = e => {
+    cfg.keyIdx = +e.target.value;
+    if (cfg.preset !== 'custom') cfg.slots = slotsFromPreset(cfg.preset);
+    renderSettings(); changed();
+  };
+  $('shuffle').onclick = () => {
+    cfg.slots = randomDiatonic(cfg.count); cfg.preset = 'custom'; $('preset').value = 'custom'; changed();
+  };
+  $('chordToggle').onchange = e => { cfg.chord = e.target.checked; };
+  $('vol').oninput = e => { cfg.vol = +e.target.value; if (master) master.gain.setTargetAtTime(cfg.vol, ctx.currentTime, 0.03); };
+}
+
+function renderCards(){
+  const arps = cfg.slots.map(buildArp);
+  $('cards').innerHTML = arps.map((arp, i) => {
+    const rootOpts = ROOTS.slice();
+    if (!rootOpts.some(([L, a]) => L === arp.slot.L && a === arp.slot.a)) rootOpts.push([arp.slot.L, arp.slot.a]);
+    return `<div class="card" data-i="${i}" style="--c:var(--a${i + 1})">
+      <div class="card-top"><span class="sw"></span><span class="ord">${i + 1}º</span>
+        <button type="button" class="sym" data-play="${i}" title="Ouvir o acorde">${arp.label}</button></div>
+      <div class="tones">${arp.tones.map(t => `<div>${nameOf(t.L, t.acc)}<small>${sylFor(t, arp)}</small></div>`).join('')}</div>
+      <div class="pips" data-pips="${i}"></div>
+      <div class="pick">
+        <select data-root="${i}" aria-label="Fundamental do ${i + 1}º arpejo">${rootOpts.map(([L, a]) =>
+          `<option value="${L},${a}" ${L === arp.slot.L && a === arp.slot.a ? 'selected' : ''}>${nameOf(L, a)}</option>`).join('')}</select>
+        <select data-type="${i}" aria-label="Tipo do ${i + 1}º arpejo">${ARPEGGIO_TYPES.map(T =>
+          `<option value="${T.id}" ${T.id === arp.slot.type ? 'selected' : ''}>${T.nome}</option>`).join('')}</select>
+      </div></div>`;
+  }).join('');
+  updateCards();
+}
+$('cards').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.root !== undefined){ const [L, a] = t.value.split(',').map(Number); Object.assign(cfg.slots[+t.dataset.root], { L, a }); }
+  else if (t.dataset.type !== undefined){ cfg.slots[+t.dataset.type].type = t.value; }
+  else return;
+  cfg.preset = 'custom'; $('preset').value = 'custom';
+  changed();
+});
+$('cards').addEventListener('click', e => {
+  const b = e.target.closest('[data-play]'); if (!b) return;
+  ensureAudio(); playChord(buildArp(cfg.slots[+b.dataset.play], 0));
+});
+function updateCards(){
+  document.querySelectorAll('.card').forEach(c => {
+    const i = +c.dataset.i;
+    c.classList.toggle('active', g.phase === 'play' && g.arpIdx === i);
+    const pips = c.querySelector('.pips');
+    const done = g.phase === 'play' && g.arpIdx === i ? g.count : (g.phase === 'done' ? cfg.notes : 0);
+    pips.innerHTML = Array.from({ length:cfg.notes }, (_, k) => `<i class="${k < done ? 'on' : ''}"></i>`).join('');
+  });
+}
+
+function fmt(ms){ const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+function renderStats(){
+  if (appMode !== 'game'){ renderDrillStats(); return; }
+  $('lblLap').textContent = 'Volta'; $('lblNotes').textContent = 'Notas'; $('lblErr').textContent = 'Erros'; $('lblClock').textContent = 'Tempo';
+  $('stLap').textContent = g.phase === 'idle' ? '–' : (cfg.laps ? `${Math.min(g.lap, cfg.laps)}/${cfg.laps}` : g.lap);
+  $('stNotes').textContent = g.path.length;
+  $('stErr').textContent = g.errors;
+  const end = g.t1 || performance.now();
+  $('stClock').textContent = g.t0 ? fmt(end - g.t0) : '0:00';
+}
+function renderStatus(){
+  if (appMode === 'oct'){ renderOctStatus(); return; }
+  if (appMode === 'drill'){ renderDrillStatus(); return; }
+  const main = $('main'), sub = $('sub');
+  let subText = '', warn = false;
+  if (g.phase === 'idle'){
+    main.textContent = 'Pronto para começar';
+    subText = g.msg || 'Toque em Começar: o primeiro acorde soa e a nota inicial aparece no braço.';
+  } else if (g.phase === 'play'){
+    const arp = g.arps[g.arpIdx], lbl = `<span class="chart">${arp.label}</span>`;
+    if (!g.path.length){ main.innerHTML = `Nota inicial em ${lbl}`; subText = 'Toque a nota marcada no braço.'; }
+    else if (g.trans){ main.innerHTML = `Troca → ${lbl}`;
+      subText = `Vá ao tom de ${arp.label} mais próximo, acima ou abaixo (sem repetir a nota).`; }
+    else { main.innerHTML = `${lbl} · nota ${g.count + 1} de ${cfg.notes}`; subText = `Tom vizinho de ${arp.label}, logo acima ou logo abaixo.`; }
+  } else {
+    main.textContent = 'Rodada completa';
+    const secs = ((g.t1 - g.t0) / 1000).toFixed(0);
+    subText = `${g.path.length} notas em ${fmt(g.t1 - g.t0)} (${secs} s), ${g.errors} ${g.errors === 1 ? 'erro' : 'erros'}${g.hints ? `, ${g.hints} ${g.hints === 1 ? 'dica' : 'dicas'}` : ''}.`;
+  }
+  if (g.flash && performance.now() < g.flash.until){ subText = g.flash.text; warn = g.flash.warn; }
+  sub.textContent = subText; sub.classList.toggle('warn', warn);
+  $('go').textContent = g.phase === 'idle' ? 'Começar' : g.phase === 'play' ? 'Recomeçar' : 'Jogar de novo';
+  $('hintBtn').disabled = g.phase !== 'play';
+  renderStats();
+}
+function runBreathBar(){
+  const bar = $('breath'), i = bar.querySelector('i');
+  bar.style.setProperty('--cur', `var(--a${g.arpIdx + 1})`);
+  if (!cfg.breath){ bar.classList.remove('show'); return; }
+  bar.classList.add('show');
+  i.style.transition = 'none'; i.style.width = '100%'; void i.offsetWidth;
+  i.style.transition = `width ${cfg.breath}ms linear`; i.style.width = '0%';
+  setTimeout(() => bar.classList.remove('show'), cfg.breath + 150);
+}
+function renderAll(){ renderCards(); renderStatus(); renderBoard(); if (appMode !== 'game') renderDrillChips(); }
+
+$('go').onclick = () => { if (cfg.input === 'mic') startMic(); return (appMode === 'drill' ? drillStart() : appMode === 'oct' ? octStart() : start()); };
+function setWin(lo, hi, moved){
+  if (hi - lo < 3){ if (moved === 'lo') hi = Math.min(FRETS, lo + 3); else lo = Math.max(0, hi - 3); }
+  cfg.lo = lo; cfg.hi = hi;
+  buildBoard(); renderSettings(); changed();
+}
+$('winLo').onchange = e => setWin(+e.target.value, cfg.hi, 'lo');
+$('winHi').onchange = e => setWin(cfg.lo, +e.target.value, 'hi');
+$('exitStage').onclick = () => exitStage();
+try { if (localStorage.getItem('elo-turn') === '1') document.body.classList.add('turn'); } catch (e) {}
+$('turnStage').onclick = () => {
+  const on = document.body.classList.toggle('turn');
+  try { localStorage.setItem('elo-turn', on ? '1' : '0'); } catch (e) {}
+  refocus();
+};
+$('flipNut').onclick = () => setView('nutRight', !view.nutRight);
+$('flipStr').onclick = () => setView('lowTop', !view.lowTop);
+$('hintBtn').onclick = () => {
+  if (appMode === 'oct') return;
+  if (appMode === 'drill'){ if (dr.phase === 'play' && dr.group){ dr.hintMidi = dr.needRef ? dr.group.ref : dr.curTarget; dr.hintCol = BOARD_COL[dr.needRef ? 0 : dr.group.dirs[dr.group.i].arpIdx]; dr.hintUntil = performance.now() + 2500; renderBoard(); setTimeout(renderBoard, 2550); } return; }
+  if (g.phase !== 'play') return;
+  g.hints++; g.hintUntil = performance.now() + 1800;
+  renderBoard(); setTimeout(renderBoard, 1850);
+};
+setInterval(() => { if (g.phase === 'play' || dr.phase === 'play') renderStats(); }, 250);
+
+
+/* ================= MODO REFORÇO ================= */
+let appMode = 'game';
+/* Direções: rel 0 = mesmo arpejo (acorde 1), 1 = próximo arpejo (acorde 2). Para novas direções, acrescente uma linha. */
+const DRILL_DIRS = [
+  { id:'f-mesmo', nome:'pra frente', sentido:+1, rel:0, alvo:'mesmo arpejo' },
+  { id:'t-mesmo', nome:'pra trás', sentido:-1, rel:0, alvo:'mesmo arpejo' },
+  { id:'f-prox', nome:'pra frente', sentido:+1, rel:1, alvo:'próximo arpejo' },
+  { id:'t-prox', nome:'pra trás', sentido:-1, rel:1, alvo:'próximo arpejo' },
+];
+const dr = { a1:{L:1,a:0,type:'m7'}, a2:{L:4,a:0,type:'dom7'}, nextPc:null, phase:'idle', group:null,
+  hits:0, misses:0, streak:0, t0:null, t1:null, locked:false, lastOk:null, lastMsg:null, hintUntil:0, msg:null, tok:0, chainN:1, needRef:false, stepIdx:0, cur:null, curTarget:null, chain:[], hintMidi:null, hintCol:null };
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const drillArps = () => [buildArp({ ...dr.a1 }, 0), buildArp({ ...dr.a2 }, 1)];
+const readAcorde = (rid, tid) => { const [L, a] = $(rid).value.split(',').map(Number); return { L, a, type: $(tid).value }; };
+
+/* Alvo: o tom mais próximo, estritamente acima ou abaixo, sem ser a mesma nota (nome) da referência */
+function drillTarget(ref, refPc, arp, sentido){
+  const lo = lowest(), hi = highest();
+  if (sentido > 0){ for (let m = ref + 1; m <= hi; m++) if (m % 12 !== refPc && arp.pcs.has(m % 12) && playable(m)) return m; }
+  else { for (let m = ref - 1; m >= lo; m--) if (m % 12 !== refPc && arp.pcs.has(m % 12) && playable(m)) return m; }
+  return null;
+}
+/* Grupo = uma nota de partida com as perguntas possíveis, em ordem aleatória */
+function buildGroup(pc, arps){
+  const lo = lowest(), hi = highest(), refs = [];
+  for (let m = lo; m <= hi; m++) if (m % 12 === pc){ const ps = positionsIn(m); if (ps.length) refs.push({ m, ps }); }
+  if (!refs.length) return null;
+  const pick = refs[Math.floor(Math.random() * refs.length)];
+  const refPos = pick.ps[Math.floor(Math.random() * pick.ps.length)];
+  const t0 = toneOf(arps[0], pick.m);
+  const dirs = [];
+  for (const d of shuffle(DRILL_DIRS.slice())){
+    const target = drillTarget(pick.m, pc, arps[d.rel], d.sentido);
+    if (target != null) dirs.push({ ...d, arpIdx: d.rel, target });
+  }
+  if (!dirs.length) return null;
+  return { pc, ref: pick.m, refPos, refName: nameOf(t0.L, t0.acc), arps, dirs, i: 0 };
+}
+/* Nota nova: a pedida, ou sorteada entre as do acorde 1 (diferente da anterior) */
+function newGroup(pc){
+  const arps = drillArps();
+  const pool = pc != null ? [pc] : shuffle(arps[0].tones.map(t => t.pc).filter(p => !dr.group || p !== dr.group.pc));
+  for (const p of pool){ const grp = buildGroup(p, arps); if (grp){ dr.group = grp; return true; } }
+  return false;
+}
+function drillStart(){
+  ensureAudio();
+  const want = dr.nextPc; dr.nextPc = null;
+  Object.assign(dr, { phase:'play', hits:0, misses:0, streak:0, t0:performance.now(), t1:null, locked:false, lastOk:null, lastMsg:null, hintUntil:0, msg:null });
+  dr.tok++;
+  if (!newGroup(want)){ drillStop('Nenhuma nota destes acordes cabe nesta região. Amplie as casas.'); return; }
+  enterStage();
+  startQuestion();
+  renderAll();
+  requestAnimationFrame(() => focusFret(dr.group.refPos.f, true));
+}
+function drillStop(msg){
+  if (dr.t0 && !dr.t1 && dr.phase === 'play') dr.t1 = performance.now();
+  dr.phase = 'idle'; dr.group = null; dr.locked = false; dr.tok++; dr.msg = msg || null; dr.missMsg = null;
+  renderAll();
+}
+function advanceDrill(){
+  dr.locked = false; dr.lastOk = null; dr.lastMsg = null;
+  const grp = dr.group; grp.i++;
+  let note = null;
+  if (grp.i >= grp.dirs.length){
+    if (!newGroup(null)){ drillStop('Não há mais notas para tocar nesta região. Amplie as casas.'); return; }
+    note = `Nova nota: ${dr.group.refName}`;
+  }
+  startQuestion();
+  if (note) flash(note, false, 1500);
+  renderAll();
+}
+function scheduleNext(ms, fn){ const tok = ++dr.tok; setTimeout(() => { if (tok === dr.tok && dr.phase === 'play') fn(); }, ms); }
+function totalAnswers(){ return dr.chainN >= 2 ? dr.chainN : 1; }
+/* Próximo alvo da sequência: sempre a partir da última nota clicada */
+function prepareStep(){
+  const grp = dr.group, q = grp.dirs[grp.i];
+  if (dr.needRef){ dr.curTarget = grp.ref; return true; }
+  dr.curTarget = drillTarget(dr.cur, dr.cur % 12, grp.arps[q.arpIdx], q.sentido);
+  return dr.curTarget != null;
+}
+/* Nova pergunta: volta para a nota inicial sorteada */
+function startQuestion(){
+  dr.needRef = dr.chainN >= 2; dr.stepIdx = 0; dr.cur = dr.group.ref; dr.chain = [];
+  dr.hintMidi = null; dr.hintUntil = 0; dr.missMsg = null; dr.lastMsg = null;
+  prepareStep();
+  playNote(dr.group.ref, { gain:.55, t60:2.2, syl: sylFor(toneOf(dr.group.arps[0], dr.group.ref), dr.group.arps[0]) });
+}
+function pcName(m){
+  const pc = m % 12;
+  for (const a of dr.group.arps){ const t = a.tones.find(x => x.pc === pc); if (t) return nameOf(t.L, t.acc); }
+  return ['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'][pc];
+}
+function endQuestion(msg){ flash(msg, true, 1600); advanceDrill(); }
+function drillMiss(s, f, midi, text, hintMidi, hintCol){
+  dr.misses++; dr.streak = 0;
+  dr.hintMidi = hintMidi; dr.hintCol = hintCol; dr.hintUntil = Infinity; dr.missMsg = text;
+  userNote(midi, { gain:.45, t60:.14 }); missFx(s, f);
+  const hArp = hintCol === BOARD_COL[0] ? drillArps()[0] : drillArps()[1], ht = toneOf(hArp, hintMidi);
+  playNote(hintMidi, { gain:.5, delay:.35, t60:2.4, syl: ht ? sylFor(ht, hArp) : null });
+  renderAll();
+}
+function drillPick(s, f){
+  if (dr.phase !== 'play' || dr.locked || !dr.group) return;
+  if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
+  const grp = dr.group, q = grp.dirs[grp.i], midi = OPEN[s] + f;
+  if (dr.needRef){
+    if (midi !== grp.ref){ drillMiss(s, f, midi, `Toque ${grp.refName}, a referência.`, grp.ref, BOARD_COL[0]); return; }
+    dr.hits++; dr.streak++; dr.missMsg = null; dr.hintMidi = null; dr.hintUntil = 0;
+    dr.chain.push({ s, f, syl: sylFor(toneOf(grp.arps[0], midi), grp.arps[0]), col: BOARD_COL[0] });
+    dr.lastMsg = `✓ ${grp.refName}`; dr.locked = true; dr.needRef = false;
+    userNote(midi, { syl: dr.chain[dr.chain.length - 1].syl }); ripple(s, f, BOARD_COL[0]); renderAll();
+    scheduleNext(600, () => {
+      dr.locked = false; dr.lastMsg = null;
+      if (!prepareStep()) return endQuestion('Não há mais notas nessa direção.');
+      renderAll();
+    });
+    return;
+  }
+  const arp = grp.arps[q.arpIdx];
+  if (midi !== dr.curTarget){
+    const tq = toneOf(arp, dr.curTarget);
+    drillMiss(s, f, midi, `Era ${nameOf(tq.L, tq.acc)} (${sylFor(tq, arp)}). Veja as casas marcadas.`, dr.curTarget, BOARD_COL[q.arpIdx]);
+    return;
+  }
+  const t = toneOf(arp, midi), syl = sylFor(t, arp), col = BOARD_COL[q.arpIdx];
+  dr.hits++; dr.streak++; dr.missMsg = null; dr.hintMidi = null; dr.hintUntil = 0;
+  dr.chain.push({ s, f, syl, col });
+  dr.lastMsg = `✓ ${nameOf(t.L, t.acc)} · ${syl}`;
+  dr.locked = true; dr.cur = midi; dr.stepIdx++;
+  userNote(midi, { syl }); ripple(s, f, col); renderAll();
+  const last = dr.stepIdx >= totalAnswers();
+  scheduleNext(last ? 900 : 700, () => {
+    dr.locked = false; dr.lastMsg = null;
+    if (last){ advanceDrill(); return; }
+    if (!prepareStep()) return endQuestion('Não há mais notas nessa direção.');
+    renderAll();
+  });
+}
+/* Oitavas: ordem fixa, igual ao Reforço. Para cada posição da nota do acorde 1, de agudo a grave, pergunta a troca para o acorde 2 (frente e/ou trás). Com "Notas a clicar" ≥ 2: clica a referência e depois as notas encadeadas. */
+const oc = { pc:null, reps:1, dirs:'ambas', qs:[], q:0, step:0, needRef:false, done:[] };
+function octBuild(){
+  const [a1, a2] = drillArps(), pc = oc.pc, qs = [];
+  const sents = oc.dirs === 'frente' ? [1] : oc.dirs === 'tras' ? [-1] : [1, -1];
+  const N = dr.chainN >= 2 ? dr.chainN : 1;
+  for (let p = 1; p <= oc.reps; p++)
+    for (let m = highest(); m >= lowest(); m--){
+      if (m % 12 !== pc) continue;
+      for (const ps of positionsIn(m))
+        for (const sent of sents){
+          const steps = [];
+          let cur = m;
+          for (let k = 0; k < N; k++){
+            const t = drillTarget(cur, cur % 12, a2, sent);
+            if (t == null) break;
+            const tn = toneOf(a2, t);
+            steps.push({ m:t, name:nameOf(tn.L, tn.acc), syl:sylFor(tn, a2) });
+            cur = t;
+          }
+          if (!steps.length) continue;
+          const t1 = toneOf(a1, m);
+          qs.push({ pass:p, ref:{ m, s:ps.s, f:ps.f }, refName:nameOf(t1.L, t1.acc), refSyl:sylFor(t1, a1), sent, needRef:true, steps });
+        }
+    }
+  return qs;
+}
+function octAsk(){
+  const Q = oc.qs[oc.q];
+  oc.step = 0; oc.needRef = Q.needRef; oc.done = [];
+  dr.locked = false; dr.lastMsg = null; dr.missMsg = null; dr.hintMidi = null; dr.hintUntil = 0;
+  playNote(Q.ref.m, { gain:.55, t60:2.2, syl: Q.refSyl });
+  requestAnimationFrame(() => focusFret(Q.ref.f, true));
+}
+function octStart(){
+  ensureAudio();
+  const arp1 = drillArps()[0];
+  if (oc.pc == null || !arp1.pcs.has(oc.pc)) oc.pc = arp1.tones[0].pc;
+  oc.qs = octBuild(); oc.q = 0;
+  Object.assign(dr, { phase:'play', hits:0, misses:0, streak:0, t0:performance.now(), t1:null, locked:false, lastOk:null, lastMsg:null, missMsg:null, msg:null, hintUntil:0, hintMidi:null, hintCol:null });
+  dr.tok++;
+  if (!oc.qs.length){ drillStop('Esta nota não tem troca possível nesta região. Amplie as casas.'); return; }
+  enterStage();
+  octAsk();
+  renderAll();
+}
+function octPick(s, f){
+  if (dr.phase !== 'play' || dr.locked || !oc.qs.length) return;
+  if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
+  const Q = oc.qs[oc.q], midi = OPEN[s] + f;
+  if (oc.needRef){
+    if (midi !== Q.ref.m){ drillMiss(s, f, midi, `Toque ${Q.refName}, a referência.`, Q.ref.m, BOARD_COL[0]); return; }
+    dr.hits++; dr.streak++; dr.missMsg = null; dr.hintMidi = null; dr.hintUntil = 0;
+    oc.done.push({ s, f, syl:Q.refSyl, col:BOARD_COL[0] });
+    dr.lastMsg = `✓ ${Q.refName}`; dr.locked = true; oc.needRef = false;
+    userNote(midi, { syl: Q.refSyl }); ripple(s, f, BOARD_COL[0]); renderAll();
+    scheduleNext(600, () => { dr.locked = false; dr.lastMsg = null; renderAll(); });
+    return;
+  }
+  const T = Q.steps[oc.step];
+  if (midi !== T.m){ drillMiss(s, f, midi, `Era ${T.name} (${T.syl}). Veja as casas marcadas.`, T.m, BOARD_COL[1]); return; }
+  dr.hits++; dr.streak++; dr.missMsg = null; dr.hintMidi = null; dr.hintUntil = 0;
+  oc.done.push({ s, f, syl:T.syl, col:BOARD_COL[1] });
+  dr.lastMsg = `✓ ${T.name} · ${T.syl}`; dr.locked = true; oc.step++;
+  userNote(midi, { syl: T.syl }); ripple(s, f, BOARD_COL[1]); renderAll();
+  const last = oc.step >= Q.steps.length;
+  scheduleNext(last ? 900 : 700, () => {
+    dr.locked = false; dr.lastMsg = null;
+    if (last){
+      oc.q++;
+      if (oc.q >= oc.qs.length){ drillStop(`Pronto: ${oc.reps > 1 ? oc.reps + ' passagens concluídas' : 'uma passagem concluída'}.`); return; }
+      octAsk();
+    }
+    renderAll();
+  });
+}
+function renderOctBoard(){
+  let h = '', d = '';
+  const now = performance.now();
+  L_trail.innerHTML = '';
+  if (dr.phase === 'play' && oc.qs.length){
+    const Q = oc.qs[oc.q], x = noteX(Q.ref.f), y = strY(Q.ref.s), c = BOARD_COL[0];
+    d += `<circle class="pulse" cx="${x}" cy="${y}" r="16" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="2.5"/>
+      <circle cx="${x}" cy="${y}" r="12" fill="${c}"/>
+      <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" fill="#1b120b" font-weight="700">${Q.refName}</text>`;
+    if (dr.hintMidi != null && now < dr.hintUntil)
+      for (const p of positionsReach(dr.hintMidi))
+        h += `<circle cx="${noteX(p.f)}" cy="${strY(p.s)}" r="16" fill="${dr.hintCol}" fill-opacity=".2" stroke="${dr.hintCol}" stroke-width="2" stroke-dasharray="4 3"/>`;
+    for (const k of oc.done){
+      const kx = noteX(k.f), ky = strY(k.s);
+      d += `<g class="dot"><circle cx="${kx}" cy="${ky}" r="14" fill="${k.col}" stroke="#1b1714" stroke-width="1.5"/><text x="${kx}" y="${ky + 4}" text-anchor="middle" font-size="12" fill="#1b120b">${k.syl}</text></g>`;
+    }
+  }
+  L_help.innerHTML = h; L_dots.innerHTML = d;
+}
+function renderOctStatus(){
+  const main = $('main'), sub = $('sub');
+  let subText = '', warn = false;
+  if (dr.phase === 'idle'){
+    main.textContent = 'Oitavas';
+    subText = dr.msg || 'Escolha a nota no acorde 1 e toque em Começar.';
+  } else {
+    const Q = oc.qs[oc.q], arp2 = drillArps()[1], word = Q.sent > 0 ? 'aguda' : 'grave';
+    const where = `Pergunta ${oc.q + 1} de ${oc.qs.length}${oc.reps > 1 ? ` · passagem ${Q.pass} de ${oc.reps}` : ''}`;
+    if (oc.needRef){
+      main.innerHTML = `Toque <span class="chart">${Q.refName}</span> para começar`;
+      subText = `Depois: mais ${word} em ${arp2.label} · ${where}`;
+    } else {
+      const total = Q.steps.length, passo = total > 1 ? ` <span class="hint-txt">${Math.min(oc.step + 1, total)} de ${total}</span>` : '';
+      const from = oc.step > 0 ? Q.steps[oc.step - 1].name : Q.refName;
+      main.innerHTML = `Mais ${word} em <span class="chart">${arp2.label}</span>${passo}`;
+      subText = `${where} · a partir de ${from}`;
+    }
+    if (dr.locked && dr.lastMsg) subText = dr.lastMsg;
+    else if (dr.missMsg){ subText = dr.missMsg; warn = !dr.locked; }
+  }
+  if (g.flash && performance.now() < g.flash.until){ subText = g.flash.text; warn = g.flash.warn; }
+  sub.textContent = subText; sub.classList.toggle('warn', warn);
+  $('go').textContent = dr.phase === 'play' ? 'Recomeçar' : 'Começar';
+  $('hintBtn').disabled = true;
+  renderDrillStats();
+}
+function setMode(m){
+  appMode = m;
+  document.body.classList.toggle('drill', m !== 'game');
+  document.body.classList.toggle('oct', m === 'oct');
+  g = newGame(); dr.phase = 'idle'; dr.group = null; dr.locked = false; dr.tok++; dr.nextPc = null; dr.msg = null; dr.missMsg = null;
+  renderSettings(); renderDrillPanel(); renderAll();
+}
+function renderDrillBoard(){
+  let h = '', d = '';
+  const now = performance.now(), grp = dr.group;
+  L_trail.innerHTML = '';
+  if (grp){
+    for (let m = lowest(); m <= highest(); m++) if (m % 12 === grp.pc)
+      for (const p of positionsIn(m)){
+        if (m === grp.ref && p.s === grp.refPos.s && p.f === grp.refPos.f) continue;
+        d += `<circle cx="${noteX(p.f)}" cy="${strY(p.s)}" r="9" fill="#d8cfbd" fill-opacity=".38"/>`;
+      }
+    const r = grp.refPos, x = noteX(r.f), y = strY(r.s), c = BOARD_COL[0];
+    d += `<circle class="pulse" cx="${x}" cy="${y}" r="16" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="2.5"/>
+      <circle cx="${x}" cy="${y}" r="12" fill="${c}"/>
+      <text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" fill="#1b120b" font-weight="700">${grp.refName}</text>`;
+    if (dr.hintMidi != null && now < dr.hintUntil)
+      for (const p of positionsReach(dr.hintMidi)){
+        const col = dr.hintCol;
+        h += `<circle cx="${noteX(p.f)}" cy="${strY(p.s)}" r="16" fill="${col}" fill-opacity=".2" stroke="${col}" stroke-width="2" stroke-dasharray="4 3"/>`;
+      }
+  }
+  for (const k of dr.chain){
+    const x = noteX(k.f), y = strY(k.s);
+    d += `<g class="dot"><circle cx="${x}" cy="${y}" r="14" fill="${k.col}" stroke="#1b1714" stroke-width="1.5"/><text x="${x}" y="${y + 4}" text-anchor="middle" font-size="12" fill="#1b120b">${k.syl}</text></g>`;
+  }
+  L_help.innerHTML = h; L_dots.innerHTML = d;
+}
+function renderDrillStatus(){
+  const main = $('main'), sub = $('sub');
+  let subText = '', warn = false;
+  if (dr.phase === 'idle'){
+    main.textContent = 'Reforço';
+    subText = dr.msg || 'Escolha os dois acordes e a nota de partida, depois toque em Começar.';
+  } else {
+    const grp = dr.group, q = grp.dirs[grp.i], arp = grp.arps[q.arpIdx];
+    const word = q.sentido > 0 ? 'aguda' : 'grave', pergunta = `${q.nome} · ${q.alvo}`;
+    if (dr.needRef){
+      main.innerHTML = `Toque <span class="chart">${grp.refName}</span> para começar`;
+      subText = `Depois: mais ${word} em ${arp.label} · ${pergunta}`;
+    } else {
+      const total = totalAnswers(), passo = total > 1 ? ` <span class="hint-txt">${dr.stepIdx + 1} de ${total}</span>` : '';
+      main.innerHTML = `Mais ${word} em <span class="chart">${arp.label}</span>${passo}`;
+      subText = `${pergunta} · a partir de ${pcName(dr.cur)}`;
+    }
+    warn = !!dr.missMsg && !dr.locked;
+    if (dr.locked && dr.lastMsg) subText = dr.lastMsg;
+    else if (dr.missMsg) subText = dr.missMsg;
+  }
+  if (g.flash && performance.now() < g.flash.until){ subText = g.flash.text; warn = g.flash.warn; }
+  sub.textContent = subText; sub.classList.toggle('warn', warn);
+  $('go').textContent = dr.phase === 'play' ? 'Recomeçar' : 'Começar';
+  $('hintBtn').disabled = dr.phase !== 'play';
+  renderDrillStats();
+}
+function renderDrillStats(){
+  $('lblLap').textContent = 'Sequência'; $('stLap').textContent = dr.streak;
+  $('lblNotes').textContent = 'Acertos'; $('stNotes').textContent = dr.hits;
+  $('lblErr').textContent = 'Erros'; $('stErr').textContent = dr.misses;
+  $('lblClock').textContent = 'Tempo'; $('stClock').textContent = dr.t0 ? fmt((dr.t1 || performance.now()) - dr.t0) : '0:00';
+}
+function renderDrillChips(){
+  const arp1 = drillArps()[0], cur = appMode === 'oct' ? oc.pc : dr.group ? dr.group.pc : dr.nextPc;
+  $('dNotes').innerHTML = arp1.tones.map(t => `<button type="button" class="chip" data-pc="${t.pc}" aria-pressed="${cur === t.pc}"><b>${nameOf(t.L, t.acc)}</b><small>${sylFor(t, arp1)}</small></button>`).join('');
+  $('dNoteHint').textContent = appMode === 'oct' ? `Nota de partida em ${arp1.label}. Depois, a troca para ${drillArps()[1].label}.` : `Notas de ${arp1.label}. A primeira sai daqui; depois o jogo sorteia entre elas.`;
+}
+function renderDrillPanel(){
+  seg('sChain', [{v:1,t:'Só a resposta'},{v:2,t:'2'},{v:3,t:'3'},{v:4,t:'4'}], () => dr.chainN, v => { dr.chainN = v; drillChanged(); });
+  $('chainHint').textContent = dr.chainN >= 2 ? `Clique a nota de referência e depois ${dr.chainN} ${dr.chainN > 1 ? 'notas, seguindo a direção' : 'nota, seguindo a direção'}. Ao terminar, volta à nota inicial.` : 'Só a nota-resposta, como antes.';
+  const roots = cur => ROOTS.map(([L, a]) => `<option value="${L},${a}" ${L === cur.L && a === cur.a ? 'selected' : ''}>${nameOf(L, a)}</option>`).join('');
+  const types = cur => ARPEGGIO_TYPES.map(T => `<option value="${T.id}" ${T.id === cur.type ? 'selected' : ''}>${T.nome}</option>`).join('');
+  $('d1Root').innerHTML = roots(dr.a1); $('d1Type').innerHTML = types(dr.a1);
+  $('d2Root').innerHTML = roots(dr.a2); $('d2Type').innerHTML = types(dr.a2);
+  renderDrillChips();
+  seg('oReps', [1,2,3,4].map(v => ({ v, t:String(v) })), () => oc.reps, v => { oc.reps = v; drillChanged(); });
+  seg('oDir', [{v:'ambas',t:'Frente e trás'},{v:'frente',t:'Só mais aguda'},{v:'tras',t:'Só mais grave'}], () => oc.dirs, v => { oc.dirs = v; drillChanged(); });
+}
+function drillChanged(){
+  dr.nextPc = null;
+  if (dr.phase === 'play') drillStop('Acordes alterados. Toque em Começar.');
+  else { renderDrillPanel(); renderAll(); }
+}
+['d1Root','d1Type'].forEach(id => $(id).addEventListener('change', () => { dr.a1 = readAcorde('d1Root','d1Type'); drillChanged(); }));
+['d2Root','d2Type'].forEach(id => $(id).addEventListener('change', () => { dr.a2 = readAcorde('d2Root','d2Type'); drillChanged(); }));
+$('dNotes').addEventListener('click', e => {
+  const b = e.target.closest('[data-pc]'); if (!b || dr.locked) return;
+  const pc = +b.dataset.pc;
+  if (appMode === 'oct'){ oc.pc = pc; if (dr.phase === 'play') drillStop('Nota alterada. Toque em Começar.'); else renderDrillChips(); return; }
+  if (dr.phase !== 'play'){ dr.nextPc = pc; renderDrillChips(); return; }
+  dr.tok++;
+  if (newGroup(pc)){ startQuestion(); flash(`Nota nova: ${dr.group.refName}`, false, 1400); renderAll(); }
+  else flash('Essa nota não cabe nesta região.', true);
+});
+/* Campos que só valem para o jogo ficam ocultos no reforço */
+const GAME_ONLY = ['Arpejos na rodada','Notas por arpejo','Voltas','Respiro na troca','Progressão e tonalidade','Caminho no braço','Ajuda no braço'];
+document.querySelectorAll('.settings .field').forEach(f => { const l = f.querySelector('.lbl'); if (l && GAME_ONLY.includes(l.textContent.trim())) f.classList.add('game-only'); });
+$('chordToggle').closest('label').classList.add('game-only');
+$('cards').closest('section').classList.add('game-only');
+const chainField = document.createElement('div'); chainField.className = 'field';
+chainField.innerHTML = '<span class="lbl">Notas a clicar</span><div class="seg" id="sChain"></div><span class="hint-txt" id="chainHint"></span>';
+document.querySelector('.drillpanel').appendChild(chainField);
+
+initSelects();
+renderSettings();
+renderDrillPanel();
+renderAll();
+})();
+</script>
