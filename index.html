@@ -484,13 +484,13 @@ function yin(x, sr){
   const W = 1024, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
   let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
   rms = Math.sqrt(rms / W);
-  if (rms < 0.012) return null;
+  if (rms < 0.003) return null;
   const d = new Float32Array(tMax + 1);
   for (let tau = 1; tau <= tMax; tau++){ let sum = 0; for (let i = 0; i < W; i++){ const df = x[i] - x[i + tau]; sum += df * df; } d[tau] = sum; }
   const dp = new Float32Array(tMax + 1); dp[0] = 1; let run = 0;
   for (let tau = 1; tau <= tMax; tau++){ run += d[tau]; dp[tau] = run ? d[tau] * tau / run : 1; }
   let tau = -1;
-  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.15){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
+  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.2){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
   if (tau < 1) return null;
   const a = dp[tau - 1], b = dp[tau], c = dp[tau + 1], den = 2 * (a - 2 * b + c);
   const shift = den ? (a - c) / den : 0;
@@ -500,7 +500,7 @@ let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = nu
 async function startMic(){
   ensureAudio();
   if (micStream) return;
-  try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:false, autoGainControl:false } }); }
+  try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }); }
   catch (e) { flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
   const src = ctx.createMediaStreamSource(micStream);
   micAn = ctx.createAnalyser(); micAn.fftSize = 2048; src.connect(micAn);
