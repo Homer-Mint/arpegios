@@ -412,7 +412,15 @@ const VOICE = {
   si:['s','i'], ti:['t','i'], te:['t','E']
 };
 const VOWEL = { a:[730,1090,2440], e:[530,1840,2480], i:[270,2290,3010], o:[570,840,2410], E:[400,2100,2800], I:[400,1950,2600], A:[620,1200,2500] };
-let noiseBuf = null;
+let noiseBuf = null, glottal = null;
+function glottalWave(){
+  if (!glottal){
+    const n = 48, re = new Float32Array(n), im = new Float32Array(n);
+    for (let h = 1; h < n; h++) im[h] = Math.exp(-h / 26) / Math.pow(h, 1.2);
+    glottal = ctx.createPeriodicWave(re, im);
+  }
+  return glottal;
+}
 function sing(midi, syl, { gain = 0.5, delay = 0, t60 = 2 } = {}){
   /* A voz canta sempre numa oitava natural (C3 a B3); a classe da nota e a sílaba não mudam */
   while (midi > 59) midi -= 12;
@@ -425,25 +433,34 @@ function sing(midi, syl, { gain = 0.5, delay = 0, t60 = 2 } = {}){
   const vowStart = t0 + (fric ? 0.11 : stop ? 0.035 : 0.04);
   const out = ctx.createGain(); out.connect(master);
   out.gain.setValueAtTime(0, t0);
-  out.gain.linearRampToValueAtTime(gain * 0.9, vowStart + 0.03);
-  out.gain.setValueAtTime(gain * 0.9, t0 + dur - 0.12);
+  out.gain.linearRampToValueAtTime(gain * 0.42, vowStart + 0.03);
+  out.gain.setValueAtTime(gain * 0.42, t0 + dur - 0.12);
   out.gain.linearRampToValueAtTime(0, t0 + dur);
-  const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = f0;
-  const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2;
-  const lfoG = ctx.createGain(); lfoG.gain.value = f0 * 0.007; lfo.connect(lfoG); lfoG.connect(osc.frequency);
+  /* fonte: espectro de pulso glotal (harmônicos caem devagar e perdem força no agudo), não dente de serra */
+  const osc = ctx.createOscillator(); osc.setPeriodicWave(glottalWave()); osc.frequency.value = f0;
+  /* vibrato: entra devagar, depois de um instante, como em quem canta */
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 5.5;
+  const lfoG = ctx.createGain(); lfoG.gain.setValueAtTime(0, t0); lfoG.gain.linearRampToValueAtTime(f0 * 0.006, t0 + 0.35);
+  lfo.connect(lfoG); lfoG.connect(osc.frequency);
   /* Agudo: as formantes sobem junto com a nota, o filtro fica mais largo e o brilho é cortado; sem isso soa como trompete */
   const hi = Math.min(1, Math.max(0, (f0 - 260) / 300));
   const brightCut = ctx.createBiquadFilter(); brightCut.type = 'lowpass'; brightCut.frequency.value = 3200 - 1100 * hi;
   brightCut.connect(out);
-  const vowels = ctx.createGain(); vowels.gain.value = 4; vowels.connect(brightCut);
+  /* radiação dos lábios: sobe o agudo (~+6 dB/oitava), como na voz real; sem isso a fonte de pulso soa abafada */
+  const rad = ctx.createBiquadFilter(); rad.type = 'highshelf'; rad.frequency.value = 1200; rad.gain.value = 16; rad.connect(brightCut);
+  const vowels = ctx.createGain(); vowels.gain.value = 4; vowels.connect(rad);
+  /* formantes com largura fixa (como na voz), e nunca mais estreita que a distância entre harmônicos */
+  const BW = [90, 120, 170];
   VOWEL[v].forEach((fq, i) => {
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = i === 0 ? Math.max(fq, f0 * 1.1) : fq * (1 - 0.12 * hi); bp.Q.value = 4 - 1.5 * hi;
-    const g = ctx.createGain(); g.gain.value = [1, 0.55, 0.3][i];
+    const F = i === 0 ? Math.max(fq, f0 * 1.1) : fq * (1 - 0.12 * hi);
+    const bw = Math.max(BW[i], f0 * 1.2);
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = F; bp.Q.value = F / bw;
+    const g = ctx.createGain(); g.gain.value = [1, 0.5, 0.25][i];
     osc.connect(bp); bp.connect(g); g.connect(vowels);
   });
-  /* formante de brilho (cantor): 3,3 kHz, em todas as vogais */
+  /* formante de brilho (cantor): 3,3 kHz, em todas as vogais, bem mais discreta */
   const ring = ctx.createBiquadFilter(); ring.type = 'bandpass'; ring.frequency.value = 3300; ring.Q.value = 3;
-  const ringG = ctx.createGain(); ringG.gain.value = 0.15;
+  const ringG = ctx.createGain(); ringG.gain.value = 0.1;
   osc.connect(ring); ring.connect(ringG); ringG.connect(vowels);
   /* sopro: um pouco de ruído filtrado que segue o envelope da vogal */
   if (!noiseBuf){ noiseBuf = ctx.createBuffer(1, sr * 0.3, sr); const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; }
