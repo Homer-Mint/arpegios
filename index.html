@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Elo de Arpejos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -164,6 +166,7 @@ body.oct #hintBtn{display:none}
     <div class="field"><span class="lbl">Região do braço</span>
       <div class="row"><label class="check">Da casa <select id="winLo" aria-label="Primeira casa"></select></label><label class="check">até <select id="winHi" aria-label="Última casa"></select></label></div>
       <span class="hint-txt" id="winHint"></span></div>
+    <div class="field"><span class="lbl">Cordas</span><div class="seg" id="sStrings"></div><span class="hint-txt">Só as cordas ligadas entram no jogo. Deixe pelo menos 2.</span></div>
     <div class="field"><span class="lbl">Braço na tela</span><div class="seg" id="sNut"></div><div class="seg" id="sStr"></div><span class="hint-txt">Guardado separado para celular e computador.</span></div>
     <div class="field"><span class="lbl">Marcas do braço</span><div class="seg" id="sInlay"></div><div class="seg" id="sNums"></div><span class="hint-txt">Bolinhas de casa e números das casas.</span></div>
     <div class="field"><span class="lbl">Ajuda no braço</span><div class="seg" id="sHelp"></div></div>
@@ -192,6 +195,7 @@ body.oct #hintBtn{display:none}
     <div class="status">
       <div id="main">Pronto para começar</div>
       <div id="sub"></div>
+      <div id="micInfo" class="hint-txt" hidden></div>
       <div class="breath" id="breath"><i></i></div>
     </div>
     <div class="stats">
@@ -323,24 +327,24 @@ loadView();
 const rawNoteX = f => f === 0 ? (G.left + G.x0) / 2 + 4 : (fx[f-1] + fx[f]) / 2;
 const noteX = f => view.nutRight ? 1200 - rawNoteX(f) : rawNoteX(f);
 const strY  = s => G.top + (view.lowTop ? s : 5 - s) * G.sp;
-const positionsOf = m => { const r = []; for (let s = 0; s < 6; s++){ const f = m - OPEN[s]; if (f >= 0 && f <= FRETS) r.push({ s, f }); } return r; };
+const positionsOf = m => { const r = []; for (let s = 0; s < 6; s++){ const f = m - OPEN[s]; if (cfg.strings[s] && f >= 0 && f <= FRETS) r.push({ s, f }); } return r; };
 /* Região do braço escolhida: só valem as notas tocáveis entre as casas cfg.lo e cfg.hi */
 const inWin = f => f >= cfg.lo && f <= cfg.hi;
 /* Abertura: uma casa além de cada borda da região também vale (dedo esticado). Com ela, toda altura
    entre a nota mais grave e a mais aguda da região tem posição, e a nota mais próxima é sempre a de verdade. */
-const inReach = f => f >= cfg.lo - 1 && f <= cfg.hi + 1;
+const inReach = f => inWin(f);
 const positionsIn = m => positionsOf(m).filter(p => inWin(p.f));
 const positionsReach = m => { const a = positionsIn(m); return a.length ? a : positionsOf(m).filter(p => inReach(p.f)); };
-const lowest = () => Math.min(...OPEN.map(o => o + cfg.lo));
-const highest = () => Math.max(...OPEN.map(o => o + cfg.hi));
+const lowest = () => Math.min(...OPEN.filter((o, s) => cfg.strings[s]).map(o => o + cfg.lo));
+const highest = () => Math.max(...OPEN.filter((o, s) => cfg.strings[s]).map(o => o + cfg.hi));
 const playable = m => m >= lowest() && m <= highest() && positionsReach(m).length > 0;
 const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
 
 /* ---------- estado ---------- */
 const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
-              chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click' };
-try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; } } catch (e) {}
-function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input })); } catch (e) {} }
+              chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click', strings:[true,true,true,true,true,true] };
+try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
+function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings })); } catch (e) {} }
 let g = newGame();
 function newGame(){ return { phase:'idle', arps:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false,
                              startMidi:null, startPos:null, errors:0, hints:0, t0:null, t1:null,
@@ -480,17 +484,19 @@ function playChord(arp, delay = 0){
 }
 
 /* Microfone: detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima */
+let micRms = 0, micFloor = 0.001;
 function yin(x, sr){
-  const W = 1024, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
+  const W = 1536, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
   let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
   rms = Math.sqrt(rms / W);
-  if (rms < 0.003) return null;
+  micRms = rms;
+  if (rms < 0.0008) return null; /* só silêncio digital; quem separa nota de ruído é o limiar do YIN */
   const d = new Float32Array(tMax + 1);
   for (let tau = 1; tau <= tMax; tau++){ let sum = 0; for (let i = 0; i < W; i++){ const df = x[i] - x[i + tau]; sum += df * df; } d[tau] = sum; }
   const dp = new Float32Array(tMax + 1); dp[0] = 1; let run = 0;
   for (let tau = 1; tau <= tMax; tau++){ run += d[tau]; dp[tau] = run ? d[tau] * tau / run : 1; }
   let tau = -1;
-  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.2){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
+  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.15){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
   if (tau < 1) return null;
   const a = dp[tau - 1], b = dp[tau], c = dp[tau + 1], den = 2 * (a - 2 * b + c);
   const shift = den ? (a - c) / den : 0;
@@ -502,15 +508,20 @@ async function startMic(){
   if (micStream) return;
   try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }); }
   catch (e) { flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
+  if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
   const src = ctx.createMediaStreamSource(micStream);
-  micAn = ctx.createAnalyser(); micAn.fftSize = 2048; src.connect(micAn);
+  micAn = ctx.createAnalyser(); micAn.fftSize = 4096; src.connect(micAn);
+  /* o Safari não processa o analisador se ele não chega ao destino: liga por um ganho mudo */
+  const sink = ctx.createGain(); sink.gain.value = 0; micAn.connect(sink); sink.connect(ctx.destination);
   micBuf = new Float32Array(micAn.fftSize);
   micTimer = setInterval(micTick, 30);
+  $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
 }
 function stopMic(){
   if (micTimer) clearInterval(micTimer);
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null;
+  $('micInfo').hidden = true;
 }
 function micNote(m){
   const ps = positionsIn(m);
@@ -521,12 +532,24 @@ function micNote(m){
 }
 function micTick(){
   const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
-  if (!playing || !micAn){ micCand = null; micCnt = 0; micLast = null; return; }
+  if (!micAn) return;
+  if (!playing){ micCand = null; micCnt = 0; micLast = null; $('micInfo').textContent = 'microfone ligado'; return; }
   micAn.getFloatTimeDomainData(micBuf);
-  const r = yin(micBuf, ctx.sampleRate);
-  if (!r){ micCand = null; micCnt = 0; if (++micSilent >= 3) micLast = null; return; }
+  /* portão de ataque: só conta quando o volume sobe bem acima do ruído de fundo da sala, que é acompanhado nos momentos quietos */
+  let e = 0; for (let i = 0; i < micBuf.length; i++) e += micBuf[i] * micBuf[i];
+  const rn = Math.sqrt(e / micBuf.length);
+  const loud = rn > Math.max(0.003, micFloor * 4);
+  if (!loud) micFloor = micFloor * 0.9 + rn * 0.1;
+  const r = loud ? yin(micBuf, ctx.sampleRate) : null;
+  const db = micRms > 0 ? Math.round(20 * Math.log10(micRms)) : -120;
+  if (!r){
+    micCand = null; micCnt = 0; if (++micSilent >= 3) micLast = null;
+    $('micInfo').textContent = 'entrada ' + db + ' dB · sem nota clara';
+    return;
+  }
   micSilent = 0;
   const m = Math.round(69 + 12 * Math.log2(r.f / 440));
+  $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + r.f.toFixed(1) + ' Hz (confiança ' + Math.round(r.conf * 100) + '%)';
   if (m !== micCand){ micCand = m; micCnt = 1; return; }
   if (++micCnt === 3 && m !== micLast){ micLast = m; micNote(m); }
 }
@@ -577,6 +600,7 @@ function onPick(s, f){
   if (appMode === 'oct'){ octPick(s, f); return; }
   if (g.phase !== 'play') return;
   const midi = OPEN[s] + f, now = performance.now();
+  if (!cfg.strings[s]){ flash('Essa corda está desligada nas opções.', false, 1000); return; }
   if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
   if (now < g.breathUntil){ flash('Um instante: a troca libera em seguida.', false, 900); return; }
   if (g.targets.includes(midi)) correct(s, f, midi); else wrong(s, f, midi);
@@ -654,17 +678,15 @@ function staticBoard(){
   const W = [2.7,2.2,1.8,1.4,1.1,0.9], names = ['E','A','D','G','B','e'];
   for (let st = 0; st < 6; st++){
     const y = strY(st);
-    s += `<line x1="${G.left + 6}" y1="${y}" x2="${G.xEnd + 10}" y2="${y}" stroke="${st < 3 ? '#c9ae80' : '#ddd9d0'}" stroke-width="${W[st]}"/>`;
+    s += `<line x1="${G.left + 6}" y1="${y}" x2="${G.xEnd + 10}" y2="${y}" stroke="${st < 3 ? '#c9ae80' : '#ddd9d0'}" stroke-width="${W[st]}" ${cfg.strings[st] ? '' : 'stroke-opacity=".18"'}/>`;
   }
   const dim = (a, b) => `<rect x="${a}" y="${yT - 4}" width="${b - a}" height="${yB - yT + 8}" fill="#0c0907" fill-opacity=".66"/>`;
   const xl = f => f <= 0 ? G.left - 8 : fx[f - 1] + 1.6, xr = f => f >= FRETS ? G.xEnd + 12 : fx[f] - 1.6;
   if (cfg.lo > 1) s += dim(G.left - 8, xl(cfg.lo - 1));
-  if (cfg.lo > 0) s += dim(xl(cfg.lo - 1), xl(cfg.lo)).replace('fill-opacity=".66"', 'fill-opacity=".3"');
   if (cfg.hi < FRETS - 1) s += dim(xr(cfg.hi + 1), G.xEnd + 12);
-  if (cfg.hi < FRETS) s += dim(xr(cfg.hi), xr(cfg.hi + 1)).replace('fill-opacity=".66"', 'fill-opacity=".3"');
   s += `</g>`;
   for (let st = 0; st < 6; st++)
-    s += `<text x="${mob ? 1186 : 14}" y="${strY(st) + 4.5}" text-anchor="${mob ? 'end' : 'start'}" font-size="13" fill="#a99d8c" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="500">${names[st]}</text>`;
+    s += `<text x="${mob ? 1186 : 14}" y="${strY(st) + 4.5}" text-anchor="${mob ? 'end' : 'start'}" font-size="13" fill="#a99d8c" fill-opacity="${cfg.strings[st] ? 1 : .3}" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="500">${names[st]}</text>`;
   const marks = new Set([3,5,7,9,12,15]);
   for (let f = 0; f <= FRETS; f++)
     s += (cfg.fretNums === '12' && f !== 12) ? '' : `<text x="${noteX(f)}" y="${yB + 22}" text-anchor="middle" font-size="12" fill="${!inReach(f) ? '#4a423a' : !inWin(f) ? '#857a6c' : marks.has(f) ? '#d9cfbe' : '#6f665b'}" font-family="Schibsted Grotesk, system-ui, sans-serif" font-weight="${marks.has(f) ? 700 : 400}">${f}</text>`;
@@ -824,9 +846,10 @@ function renderSettings(){
   seg('sDo', [{v:'fixed',t:'Dó fixo'},{v:'key',t:'Móvel (tom)'},{v:'root',t:'Móvel (fund.)'}], () => cfg.doMode, v => { cfg.doMode = v; changed(); });
   seg('sTrail', [{v:'none',t:'Oculto'},{v:'last',t:'Só a última'},{v:'full',t:'Completo'}], () => cfg.trail, v => { cfg.trail = v; renderBoard(); });
   const opts = (a, b, v) => Array.from({ length:b - a + 1 }, (_, k) => a + k).map(n => `<option value="${n}" ${n === v ? 'selected' : ''}>${n}</option>`).join('');
-  $('winLo').innerHTML = opts(0, FRETS - 3, cfg.lo);
-  $('winHi').innerHTML = opts(3, FRETS, cfg.hi);
-  $('winHint').textContent = 'A nota inicial sai da região. Vale também 1 casa além de cada borda (abertura), para a nota mais próxima ser sempre a verdadeira.';
+  $('winLo').innerHTML = opts(0, FRETS - 4, cfg.lo);
+  $('winHi').innerHTML = opts(4, FRETS, cfg.hi);
+  $('winHint').textContent = 'Só valem as casas dentro da região, incluindo as bordas. A nota inicial também sai dela.';
+  renderStrings();
   seg('sNut', [{v:false,t:'Pestana à esq.'},{v:true,t:'Pestana à dir.'}], () => view.nutRight, v => setView('nutRight', v));
   seg('sStr', [{v:true,t:'Grave em cima'},{v:false,t:'Aguda em cima'}], () => view.lowTop, v => setView('lowTop', v));
   seg('sHelp', [{v:'none',t:'Nenhuma'},{v:'arp',t:'Arpejo'},{v:'alvos',t:'Alvos'}], () => cfg.help, v => { cfg.help = v; renderBoard(); });
@@ -957,8 +980,18 @@ function runBreathBar(){
 function renderAll(){ renderCards(); renderStatus(); renderBoard(); if (appMode !== 'game') renderDrillChips(); }
 
 $('go').onclick = () => { if (cfg.input === 'mic') startMic(); return (appMode === 'drill' ? drillStart() : appMode === 'oct' ? octStart() : start()); };
+/* Cordas ligadas: só as marcadas entram no jogo (E grave → e agudo) */
+function renderStrings(){
+  $('sStrings').innerHTML = ['E','A','D','G','B','e'].map((n, s) => `<button type="button" data-s="${s}" aria-pressed="${cfg.strings[s]}">${n}</button>`).join('');
+}
+$('sStrings').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const s = +b.dataset.s, on = !cfg.strings[s];
+  if (!on && cfg.strings.filter(Boolean).length <= 2){ flash('Deixe pelo menos 2 cordas ligadas.', false, 1400); return; }
+  cfg.strings[s] = on; saveBoard(); buildBoard(); renderSettings(); changed();
+};
 function setWin(lo, hi, moved){
-  if (hi - lo < 3){ if (moved === 'lo') hi = Math.min(FRETS, lo + 3); else lo = Math.max(0, hi - 3); }
+  if (hi - lo < 4){ if (moved === 'lo') hi = Math.min(FRETS, lo + 4); else lo = Math.max(0, hi - 4); }
   cfg.lo = lo; cfg.hi = hi;
   buildBoard(); renderSettings(); changed();
 }
@@ -1088,6 +1121,7 @@ function drillMiss(s, f, midi, text, hintMidi, hintCol){
 }
 function drillPick(s, f){
   if (dr.phase !== 'play' || dr.locked || !dr.group) return;
+  if (!cfg.strings[s]){ flash('Essa corda está desligada nas opções.', false, 1000); return; }
   if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
   const grp = dr.group, q = grp.dirs[grp.i], midi = OPEN[s] + f;
   if (dr.needRef){
@@ -1171,6 +1205,7 @@ function octStart(){
 }
 function octPick(s, f){
   if (dr.phase !== 'play' || dr.locked || !oc.qs.length) return;
+  if (!cfg.strings[s]){ flash('Essa corda está desligada nas opções.', false, 1000); return; }
   if (!inReach(f)){ flash(`Fora da região escolhida (casas ${cfg.lo} a ${cfg.hi}).`, false, 1400); return; }
   const Q = oc.qs[oc.q], midi = OPEN[s] + f;
   if (oc.needRef){
