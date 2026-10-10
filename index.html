@@ -468,6 +468,8 @@ function sing(midi, syl, { gain = 0.5, delay = 0, t60 = 2 } = {}){
 }
 function playNote(midi, { gain = 0.7, delay = 0, t60 = 3.2, syl = null } = {}){
   if (!ctx) return;
+  /* no modo microfone, o som do app não pode ser ouvido de volta como nota do instrumento */
+  if (cfg.input === 'mic') micMuteUntil = performance.now() + 300 + delay * 1000;
   if (cfg.voice && syl){ sing(midi, syl, { gain, delay, t60 }); return; }
   const { buf, rate } = pluckBuffer(midi, t60);
   const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
@@ -475,8 +477,8 @@ function playNote(midi, { gain = 0.7, delay = 0, t60 = 3.2, syl = null } = {}){
   src.connect(gn); gn.connect(master);
   src.start(ctx.currentTime + delay);
 }
-/* Nota que o próprio jogador produziu (clique ou instrumento): no modo microfone não toca de novo */
-function userNote(midi, opts){ if (cfg.input !== 'mic') playNote(midi, opts); }
+/* Nota que o próprio jogador produziu (clique ou instrumento): o app repete a nota junto, como um clique */
+function userNote(midi, opts){ playNote(midi, opts); }
 function playChord(arp, delay = 0){
   if (!ctx) return;
   const ms = arp.tones.map(t => 52 + (((t.pc - 52) % 12) + 12) % 12).sort((a, b) => a - b);
@@ -484,7 +486,7 @@ function playChord(arp, delay = 0){
 }
 
 /* Microfone: detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima */
-let micRms = 0, micFloor = 0.001;
+let micRms = 0, micFloor = 0.001, micMuteUntil = 0;
 function yin(x, sr){
   const W = 1536, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
   let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
@@ -540,8 +542,10 @@ function micTick(){
   const rn = Math.sqrt(e / micBuf.length);
   const loud = rn > Math.max(0.003, micFloor * 4);
   if (!loud) micFloor = micFloor * 0.9 + rn * 0.1;
-  const r = loud ? yin(micBuf, ctx.sampleRate) : null;
+  const muted = performance.now() < micMuteUntil;
+  const r = loud && !muted ? yin(micBuf, ctx.sampleRate) : null;
   const db = micRms > 0 ? Math.round(20 * Math.log10(micRms)) : -120;
+  if (muted){ micCand = null; micCnt = 0; $('micInfo').textContent = 'o app está tocando; ouvindo de novo em instantes'; return; }
   if (!r){
     micCand = null; micCnt = 0; if (++micSilent >= 3) micLast = null;
     $('micInfo').textContent = 'entrada ' + db + ' dB · sem nota clara';
