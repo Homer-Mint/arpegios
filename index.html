@@ -153,7 +153,9 @@ body.oct #hintBtn{display:none}
   <section class="settings" aria-label="Ajustes">
     <div class="field"><span class="lbl">Modo</span><div class="seg" id="sMode"></div><span class="hint-txt" id="modeHint"></span></div>
     <div class="field"><span class="lbl">Arpejos na rodada</span><div class="seg" id="sCount"></div></div>
-    <div class="field"><span class="lbl">Notas por arpejo</span><div class="seg" id="sNotes"></div></div>
+    <div class="field"><span class="lbl">Notas por arpejo</span><div class="seg" id="sNotes"></div>
+      <div class="row" id="notesRange" hidden><label class="check">de <select id="nMin" aria-label="Mínimo de notas"></select></label><label class="check">até <select id="nMax" aria-label="Máximo de notas"></select></label></div>
+      <span class="hint-txt" id="notesHint"></span></div>
     <div class="field"><span class="lbl">Voltas</span><div class="seg" id="sLaps"></div></div>
     <div class="field"><span class="lbl">Respiro na troca</span><div class="seg" id="sBreath"></div></div>
     <div class="field">
@@ -341,12 +343,15 @@ const playable = m => m >= lowest() && m <= highest() && positionsReach(m).lengt
 const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
 
 /* ---------- estado ---------- */
-const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
+const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
               chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click', strings:[true,true,true,true,true,true] };
 try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
 function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings })); } catch (e) {} }
 let g = newGame();
-function newGame(){ return { phase:'idle', arps:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false,
+/* Notas por arpejo: fixo, ou sorteado dentro da faixa escolhida (um sorteio por arpejo, refeito a cada volta) */
+const rollNotes = () => cfg.notesRnd ? cfg.notesMin + Math.floor(Math.random() * (cfg.notesMax - cfg.notesMin + 1)) : cfg.notes;
+const needNotes = () => (g.needs && g.needs[g.arpIdx]) || cfg.notes;
+function newGame(){ return { phase:'idle', arps:[], needs:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false,
                              startMidi:null, startPos:null, errors:0, hints:0, t0:null, t1:null,
                              breathUntil:0, hintUntil:0, flash:null, msg:null }; }
 
@@ -589,6 +594,7 @@ function start(){
   g = newGame();
   g.phase = 'play';
   g.arps = cfg.slots.map(buildArp);
+  g.needs = g.arps.map(rollNotes);
   const a0 = g.arps[0];
   const pool = []; for (let m = MIN; m <= MAX; m++) if (a0.pcs.has(m % 12) && playable(m)) pool.push(m);
   g.startMidi = pool[Math.floor(Math.random() * pool.length)];
@@ -636,7 +642,7 @@ function correct(s, f, midi){
   focusFret(f, false);
   g.count++;
   g.flash = null;
-  if (g.count >= cfg.notes){
+  if (g.count >= needNotes()){
     if (cfg.laps && g.lap >= cfg.laps && g.arpIdx === g.arps.length - 1){ finish(); return; }
     beginTransition();
   } else {
@@ -646,7 +652,7 @@ function correct(s, f, midi){
 }
 function beginTransition(){
   g.arpIdx = (g.arpIdx + 1) % g.arps.length;
-  if (g.arpIdx === 0) g.lap++;
+  if (g.arpIdx === 0){ g.lap++; g.needs = g.arps.map(rollNotes); }
   g.count = 0; g.trans = true;
   g.targets = computeTargets();
   g.breathUntil = performance.now() + cfg.breath;
@@ -818,7 +824,7 @@ function renderBoard(){
     }
   }
   const mode = g.phase === 'done' ? 'full' : cfg.trail;
-  const win = cfg.notes * Math.max(1, cfg.slots.length);
+  const win = (cfg.notesRnd ? cfg.notesMax : cfg.notes) * Math.max(1, cfg.slots.length);
   const vis = mode === 'full' ? g.path.slice(-2 * win) : mode === 'last' ? g.path.slice(-1) : [];
   const n = g.path.length, off = n - vis.length;
   const op = k => (n - 1 - (off + k)) < win ? 1 : 0.22;
@@ -861,7 +867,8 @@ function renderSettings(){
   seg('sMode', [{v:'game',t:'Jogo'},{v:'drill',t:'Reforço'},{v:'oct',t:'Oitavas'}], () => appMode, v => setMode(v));
   $('modeHint').textContent = appMode === 'oct' ? 'Oitavas: ordem fixa. Passa por todas as posições da nota do acorde 1, de agudo a grave, e pergunta a troca para o acorde 2.' : appMode === 'drill' ? 'Reforço: escolha dois acordes e uma nota do primeiro; o jogo faz as 4 perguntas e troca a nota.' : 'Jogo: conecte as notas dos arpejos em sequência.';
   seg('sCount', [2,3,4].map(v => ({ v, t:v })), () => cfg.count, v => { setCount(v); changed(); });
-  seg('sNotes', [2,3,4,5,6,7,8].map(v => ({ v, t:v })), () => cfg.notes, v => { cfg.notes = v; changed(); });
+  seg('sNotes', [2,3,4,5,6,7,8].map(v => ({ v, t:v })).concat([{ v:'rnd', t:'Aleatório' }]), () => cfg.notesRnd ? 'rnd' : cfg.notes,
+    v => { if (v === 'rnd') cfg.notesRnd = true; else { cfg.notesRnd = false; cfg.notes = v; } changed(); });
   seg('sLaps', [{v:1,t:'1'},{v:2,t:'2'},{v:4,t:'4'},{v:0,t:'∞'}], () => cfg.laps, v => { cfg.laps = v; changed(); });
   seg('sBreath', [{v:0,t:'0 s'},{v:800,t:'0,8 s'},{v:1200,t:'1,2 s'},{v:2000,t:'2 s'}], () => cfg.breath, v => { cfg.breath = v; changed(); });
   seg('sDo', [{v:'fixed',t:'Dó fixo'},{v:'key',t:'Móvel (tom)'},{v:'root',t:'Móvel (fund.)'}], () => cfg.doMode, v => { cfg.doMode = v; changed(); });
@@ -870,6 +877,10 @@ function renderSettings(){
   $('winLo').innerHTML = opts(0, FRETS - 4, cfg.lo);
   $('winHi').innerHTML = opts(4, FRETS, cfg.hi);
   $('winHint').textContent = 'Só valem as casas dentro da região, incluindo as bordas. A nota inicial também sai dela.';
+  $('notesRange').style.display = cfg.notesRnd ? '' : 'none';
+  $('nMin').innerHTML = opts(2, 8, cfg.notesMin);
+  $('nMax').innerHTML = opts(2, 8, cfg.notesMax);
+  $('notesHint').textContent = cfg.notesRnd ? `Cada arpejo sorteia entre ${cfg.notesMin} e ${cfg.notesMax} notas, e o sorteio muda a cada volta.` : '';
   renderStrings();
   seg('sNut', [{v:false,t:'Pestana à esq.'},{v:true,t:'Pestana à dir.'}], () => view.nutRight, v => setView('nutRight', v));
   seg('sStr', [{v:true,t:'Grave em cima'},{v:false,t:'Aguda em cima'}], () => view.lowTop, v => setView('lowTop', v));
@@ -949,8 +960,9 @@ function updateCards(){
     const i = +c.dataset.i;
     c.classList.toggle('active', g.phase === 'play' && g.arpIdx === i);
     const pips = c.querySelector('.pips');
-    const done = g.phase === 'play' && g.arpIdx === i ? g.count : (g.phase === 'done' ? cfg.notes : 0);
-    pips.innerHTML = Array.from({ length:cfg.notes }, (_, k) => `<i class="${k < done ? 'on' : ''}"></i>`).join('');
+    const n = (g.needs && g.needs[i]) || cfg.notes;
+    const done = g.phase === 'play' && g.arpIdx === i ? g.count : (g.phase === 'done' ? n : 0);
+    pips.innerHTML = Array.from({ length:n }, (_, k) => `<i class="${k < done ? 'on' : ''}"></i>`).join('');
   });
 }
 
@@ -977,7 +989,7 @@ function renderStatus(){
     if (!g.path.length){ main.innerHTML = `Nota inicial em ${lbl}`; subText = 'Toque a nota marcada no braço.'; }
     else if (g.trans){ main.innerHTML = `Troca → ${lbl}`;
       subText = `Vá ao tom de ${arp.label} mais próximo, acima ou abaixo (sem repetir a nota).`; }
-    else { main.innerHTML = `${lbl} · nota ${g.count + 1} de ${cfg.notes}`; subText = `Tom vizinho de ${arp.label}, logo acima ou logo abaixo.`; }
+    else { main.innerHTML = `${lbl} · nota ${g.count + 1} de ${needNotes()}`; subText = `Tom vizinho de ${arp.label}, logo acima ou logo abaixo.`; }
   } else {
     main.textContent = 'Rodada completa';
     const secs = ((g.t1 - g.t0) / 1000).toFixed(0);
@@ -1011,6 +1023,8 @@ $('sStrings').onclick = e => {
   if (!on && cfg.strings.filter(Boolean).length <= 2){ flash('Deixe pelo menos 2 cordas ligadas.', false, 1400); return; }
   cfg.strings[s] = on; saveBoard(); buildBoard(); renderSettings(); changed();
 };
+$('nMin').onchange = e => { cfg.notesMin = +e.target.value; if (cfg.notesMin > cfg.notesMax) cfg.notesMax = cfg.notesMin; changed(); renderSettings(); };
+$('nMax').onchange = e => { cfg.notesMax = +e.target.value; if (cfg.notesMax < cfg.notesMin) cfg.notesMin = cfg.notesMax; changed(); renderSettings(); };
 function setWin(lo, hi, moved){
   if (hi - lo < 4){ if (moved === 'lo') hi = Math.min(FRETS, lo + 4); else lo = Math.max(0, hi - 4); }
   cfg.lo = lo; cfg.hi = hi;
