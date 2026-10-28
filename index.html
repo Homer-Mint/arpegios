@@ -544,9 +544,11 @@ function yin(x, sr){
 let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = null, micCnt = 0, micLast = null, micSilent = 0, micLastF = null;
 async function startMic(){
   ensureAudio();
+  showMicLog();
   if (micStream) return;
+  micLog('pedindo acesso ao microfone…');
   try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }); }
-  catch (e) { flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
+  catch (e) { micLog('erro ao abrir o microfone: ' + (e && e.name)); flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
   if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
   const src = ctx.createMediaStreamSource(micStream);
   micAn = ctx.createAnalyser(); micAn.fftSize = 4096; src.connect(micAn);
@@ -555,7 +557,8 @@ async function startMic(){
   micBuf = new Float32Array(micAn.fftSize);
   micTimer = setInterval(micTick, 10);
   $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
-  $('micLogBox').style.display = '';
+  const tr = micStream.getAudioTracks()[0];
+  micLog('microfone ligado: ' + (tr ? tr.label : '?') + ' · áudio a ' + ctx.sampleRate + ' Hz');
 }
 function stopMic(){
   if (micTimer) clearInterval(micTimer);
@@ -576,11 +579,19 @@ function micLogCopy(){
   catch (e) { flash('Não consegui copiar; selecione o texto do log.', true, 2500); }
 }
 document.getElementById('micLogCopy').onclick = micLogCopy;
+document.body.appendChild(document.getElementById('micLogBox'));  /* fora do painel do jogo: fica visível em qualquer modo */
+function showMicLog(){
+  document.getElementById('micLogBox').style.display = '';
+  document.body.style.paddingBottom = '34vh';
+}
 function micNote(m){
   const ps = positionsIn(m);
   if (!ps.length){ micLog('fora da região: midi ' + m); flash('Essa nota está fora da região escolhida.', false, 900); return; }
-  const p = micLastF == null ? ps[0] : ps.reduce((a, b) => Math.abs(b.f - micLastF) < Math.abs(a.f - micLastF) ? b : a);
+  /* primeira nota do jogo: se a altura bate com a casa sorteada, fica nela */
+  const sp = appMode === 'game' && g.phase === 'play' && !g.path.length ? g.startPos : null;
+  const p = sp && OPEN[sp.s] + sp.f === m ? ps.find(q => q.s === sp.s && q.f === sp.f) || ps[0] : micLastF == null ? ps[0] : ps.reduce((a, b) => Math.abs(b.f - micLastF) < Math.abs(a.f - micLastF) ? b : a);
   micLastF = p.f;
+  micLog('posição: corda ' + (6 - p.s) + ', casa ' + p.f + (appMode === 'game' && g.targets ? ' · esperado midi ' + g.targets.join('/') : ''));
   onPick(p.s, p.f);
 }
 /* Detecção por ataque: um ataque (o volume sobe de repente em 10 ms) abre a leitura.
