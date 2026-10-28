@@ -205,7 +205,7 @@ body.oct #hintBtn{display:none}
       <div id="micInfo" class="hint-txt" hidden></div>
       <div id="micLogBox" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:#1d110b;color:#f4e9d8;padding:6px 10px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;font:12px system-ui,sans-serif">
-          <span>log do microfone</span><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button>
+          <span>log do microfone</span><span style="display:flex;gap:6px"><button id="micCalBtn" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">calibrar com Lá solto</button><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button></span>
         </div>
         <pre id="micLogText" style="margin:0;max-height:28vh;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap"></pre>
       </div>
@@ -536,11 +536,13 @@ function yin(x, sr){
   for (let tau = 1; tau <= tMax; tau++){ run += d[tau]; dp[tau] = run ? d[tau] * tau / run : 1; }
   let tau = -1;
   for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.15){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
-  if (tau < 1) return null;
+  if (tau < 1){ let best = 1; for (let t = Math.max(1, tMin); t < tMax; t++) if (dp[t] < best) best = dp[t]; yinBest = 1 - best; return null; }
   const a = dp[tau - 1], b = dp[tau], c = dp[tau + 1], den = 2 * (a - 2 * b + c);
   const shift = den ? (a - c) / den : 0;
   return { f: sr / (tau + shift), conf: 1 - b };
 }
+let yinBest = 0, micCtx = null, micCal = 0, micCalMode = false, micCalF = [];
+try { micCal = +localStorage.getItem('elo-micCal') || 0; } catch (e) {}
 let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = null, micCnt = 0, micLast = null, micSilent = 0, micLastF = null;
 async function startMic(){
   ensureAudio();
@@ -550,19 +552,30 @@ async function startMic(){
   try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }); }
   catch (e) { micLog('erro ao abrir o microfone: ' + (e && e.name)); flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
   if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
-  const src = ctx.createMediaStreamSource(micStream);
-  micAn = ctx.createAnalyser(); micAn.fftSize = 4096; src.connect(micAn);
+  /* A análise roda num contexto próprio, na mesma taxa do dispositivo: assim o navegador não converte a taxa
+     do sinal de entrada (uma conversão errada desloca todas as alturas pelo mesmo fator). */
+  const tr0 = micStream.getAudioTracks()[0], st = tr0 && tr0.getSettings ? tr0.getSettings() : {};
+  micCtx = ctx;
+  if (st.sampleRate && st.sampleRate !== ctx.sampleRate){
+    try { micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: st.sampleRate }); await micCtx.resume(); }
+    catch (e) { micCtx = ctx; micLog('não consegui abrir a análise a ' + st.sampleRate + ' Hz; usando ' + ctx.sampleRate + ' Hz'); }
+  }
+  const src = micCtx.createMediaStreamSource(micStream);
+  micAn = micCtx.createAnalyser(); micAn.fftSize = 4096; src.connect(micAn);
   /* o Safari não processa o analisador se ele não chega ao destino: liga por um ganho mudo */
-  const sink = ctx.createGain(); sink.gain.value = 0; micAn.connect(sink); sink.connect(ctx.destination);
+  const sink = micCtx.createGain(); sink.gain.value = 0; micAn.connect(sink); sink.connect(micCtx.destination);
   micBuf = new Float32Array(micAn.fftSize);
   micTimer = setInterval(micTick, 10);
   $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
   const tr = micStream.getAudioTracks()[0];
-  micLog('microfone ligado: ' + (tr ? tr.label : '?') + ' · áudio a ' + ctx.sampleRate + ' Hz');
+  micLog('microfone ligado: ' + (tr ? tr.label : '?') + ' · dispositivo a ' + (st.sampleRate || '?') + ' Hz · análise a ' + micCtx.sampleRate + ' Hz · som do app a ' + ctx.sampleRate + ' Hz');
+  micLog('correção de afinação atual: ' + (micCal >= 0 ? '+' : '') + micCal.toFixed(0) + ' cents');
 }
 function stopMic(){
   if (micTimer) clearInterval(micTimer);
   if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micCtx && micCtx !== ctx){ try { micCtx.close(); } catch (e) {} }
+  micCtx = null;
   micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null; micPhase = 'idle';
   $('micInfo').hidden = true;
 }
@@ -579,7 +592,29 @@ function micLogCopy(){
   catch (e) { flash('Não consegui copiar; selecione o texto do log.', true, 2500); }
 }
 document.getElementById('micLogCopy').onclick = micLogCopy;
-document.body.appendChild(document.getElementById('micLogBox'));  /* fora do painel do jogo: fica visível em qualquer modo */
+document.body.appendChild(document.getElementById('micLogBox'));
+/* Calibração: toca-se a 5ª corda solta (Lá, 110 Hz) três vezes; a diferença média vira a correção em cents */
+document.getElementById('micCalBtn').onclick = async () => {
+  if (!micStream) await startMic();
+  if (!micStream) return;
+  micCalMode = true; micCalF = []; micCal = 0; micPhase = 'idle';
+  micLog('CALIBRAÇÃO: toque a 5ª corda solta (Lá) três vezes, com uma pausa entre elas');
+  flash('Calibrando: toque o Lá solto (5ª corda) três vezes.', false, 4000);
+};
+function calibrateWith(f){
+  micCalF.push(f);
+  micLog('calibração: ' + micCalF.length + '/3 · ' + f.toFixed(1) + ' Hz');
+  if (micCalF.length < 3) return;
+  const sorted = micCalF.slice().sort((a, b) => a - b), med = sorted[1];
+  let cents = 1200 * Math.log2(med / 110);
+  cents -= 1200 * Math.round(cents / 1200);   /* aceita o Lá em qualquer oitava */
+  micCalMode = false;
+  if (Math.abs(cents) > 300){ micLog('calibração recusada: ' + cents.toFixed(0) + ' cents é longe demais de um Lá'); flash('Calibração recusada: não parecia o Lá solto.', true, 3000); return; }
+  micCal = cents;
+  try { localStorage.setItem('elo-micCal', String(micCal)); } catch (e) {}
+  micLog('calibração feita: correção de ' + (cents >= 0 ? '+' : '') + cents.toFixed(0) + ' cents');
+  flash('Calibrado: ' + (cents >= 0 ? '+' : '') + cents.toFixed(0) + ' cents.', false, 2500);
+}  /* fora do painel do jogo: fica visível em qualquer modo */
 function showMicLog(){
   document.getElementById('micLogBox').style.display = '';
   document.body.style.paddingBottom = '34vh';
@@ -603,7 +638,7 @@ function micRmsOf(x, a, b){ let e = 0; for (let i = a; i < b; i++) e += x[i] * x
 function micTick(){
   const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
   if (!micAn) return;
-  if (!playing){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
+  if (!playing && !micCalMode){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
   micAn.getFloatTimeDomainData(micBuf);
   const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 2048, N - 1024);
   const db = recent > 0 ? Math.round(20 * Math.log10(recent)) : -120;
@@ -622,7 +657,8 @@ function micTick(){
   }
   micTicks++;
   if (micTicks < 3){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
-  const r = yin(micBuf.subarray(N - 3072), ctx.sampleRate);
+  const r = yin(micBuf.subarray(N - 3072), micCtx.sampleRate);
+  if (r) r.f *= Math.pow(2, -micCal / 1200);
   if (r && r.conf >= 0.8){ micReads.push({ m: Math.round(69 + 12 * Math.log2(r.f / 440)), f: r.f, conf: r.conf }); micLog('leitura ' + r.f.toFixed(1) + ' Hz → midi ' + micReads[micReads.length - 1].m + ' · confiança ' + Math.round(r.conf * 100) + '%'); }
   const last = micReads[micReads.length - 1];
   const support = last ? micReads.filter(x => x.m === last.m).length : 0;
@@ -630,10 +666,11 @@ function micTick(){
     $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + last.f.toFixed(1) + ' Hz (confiança ' + Math.round(last.conf * 100) + '%)';
     micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 120;
     micLog('NOTA midi ' + last.m + ' · ' + support + ' leitura(s) de apoio');
+    if (micCalMode){ calibrateWith(last.f); return; }
     micNote(last.m);
     return;
   }
-  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 120; micLog('sem nota clara após 90 ms'); $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
+  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 120; micLog('sem nota clara após 90 ms · melhor confiança ' + Math.round(yinBest * 100) + '% (precisa 85%)'); $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
   $('micInfo').textContent = 'lendo a nota… entrada ' + db + ' dB';
 }
 
