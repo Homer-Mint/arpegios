@@ -156,6 +156,11 @@ body.oct #hintBtn{display:none}
     <div class="field"><span class="lbl">Notas por arpejo</span><div class="seg" id="sNotes"></div>
       <div class="row" id="notesRange" hidden><label class="check">de <select id="nMin" aria-label="Mínimo de notas"></select></label><label class="check">até <select id="nMax" aria-label="Máximo de notas"></select></label></div>
       <span class="hint-txt" id="notesHint"></span></div>
+    <div class="field game-only"><span class="lbl">Tempo por nota</span><div class="seg" id="sTimerOn"></div>
+      <div class="row" id="timerRange"><input type="range" id="timerSec" min="1" max="10" step="0.5" aria-label="Segundos por nota"><span class="hint-txt" id="timerVal"></span></div>
+      <span class="hint-txt">Se a nota não for tocada a tempo, a sequência zera e a nota continua a mesma. Errar também zera a sequência.</span></div>
+    <div class="field game-only"><span class="lbl">Erro zera a sequência</span><div class="seg" id="sErrBreaks"></div>
+      <span class="hint-txt">Com "Não", o erro conta como erro, mas a sequência continua. Útil no microfone, onde um disparo errado pode acontecer.</span></div>
     <div class="field"><span class="lbl">Voltas</span><div class="seg" id="sLaps"></div></div>
     <div class="field"><span class="lbl">Respiro na troca</span><div class="seg" id="sBreath"></div></div>
     <div class="field">
@@ -199,12 +204,15 @@ body.oct #hintBtn{display:none}
       <div id="sub"></div>
       <div id="micInfo" class="hint-txt" hidden></div>
       <div class="breath" id="breath"><i></i></div>
+      <div class="breath" id="noteBar"><i></i></div>
     </div>
     <div class="stats">
       <div class="stat"><b id="stLap">–</b><span id="lblLap">Volta</span></div>
       <div class="stat"><b id="stNotes">0</b><span id="lblNotes">Notas</span></div>
       <div class="stat"><b id="stErr">0</b><span id="lblErr">Erros</span></div>
       <div class="stat"><b id="stClock">0:00</b><span id="lblClock">Tempo</span></div>
+      <div class="stat game-only"><b id="stStreak">0</b><span>Sequência</span></div>
+      <div class="stat game-only"><b id="stBest">0</b><span>Recorde</span></div>
     </div>
     <div class="btns">
       <button class="btn" id="hintBtn" type="button" disabled>Dica</button>
@@ -293,6 +301,7 @@ function fixSyl(t){
   if (acc === 0) return FIX[d];
   if (acc === 1 && UP[d]) return UP[d];
   if (acc === -1 && DN[d]) return DN[d];
+  if (acc === -1 && d === 0) return 'ti';   /* Cb = dó bemol = ti (não é o si da nota B) */
   const semis = (((NAT[d] + acc) % 12) + 12) % 12, e = NAT.indexOf(semis);
   if (e >= 0) return FIX[e];
   return FIX[d] + (ACC[acc] ?? '');
@@ -343,15 +352,15 @@ const playable = m => m >= lowest() && m <= highest() && positionsReach(m).lengt
 const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
 
 /* ---------- estado ---------- */
-const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
+const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, timerOn:false, timerSec:4, errBreaks:true, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
               chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click', strings:[true,true,true,true,true,true] };
-try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
-function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings })); } catch (e) {} }
+try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; cfg.timerOn = bv.timerOn === true; cfg.errBreaks = bv.errBreaks !== false; if (typeof bv.timerSec === 'number' && bv.timerSec >= 1 && bv.timerSec <= 10) cfg.timerSec = bv.timerSec; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
+function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings, timerOn:cfg.timerOn, timerSec:cfg.timerSec, errBreaks:cfg.errBreaks })); } catch (e) {} }
 let g = newGame();
 /* Notas por arpejo: fixo, ou sorteado dentro da faixa escolhida (um sorteio por arpejo, refeito a cada volta) */
 const rollNotes = () => cfg.notesRnd ? cfg.notesMin + Math.floor(Math.random() * (cfg.notesMax - cfg.notesMin + 1)) : cfg.notes;
 const needNotes = () => (g.needs && g.needs[g.arpIdx]) || cfg.notes;
-function newGame(){ return { phase:'idle', arps:[], needs:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false,
+function newGame(){ return { phase:'idle', arps:[], needs:[], arpIdx:0, count:0, lap:1, path:[], targets:[], trans:false, streak:0, deadline:null,
                              startMidi:null, startPos:null, errors:0, hints:0, t0:null, t1:null,
                              breathUntil:0, hintUntil:0, flash:null, msg:null }; }
 
@@ -544,7 +553,7 @@ async function startMic(){
 function stopMic(){
   if (micTimer) clearInterval(micTimer);
   if (micStream) micStream.getTracks().forEach(t => t.stop());
-  micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null;
+  micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null; micPhase = 'idle';
   $('micInfo').hidden = true;
 }
 function micNote(m){
@@ -554,30 +563,42 @@ function micNote(m){
   micLastF = p.f;
   onPick(p.s, p.f);
 }
+/* Detecção por ataque: a nota conta quando o volume dispara de repente; a altura é lida 60 ms depois e conta uma vez.
+   Até o som cair de novo, nada mais é lido, então a cauda da nota e o ruído não viram nota errada. */
+let micPhase = 'idle', micTicks = 0, micPeak = 0;
+function micRmsOf(x, a, b){ let e = 0; for (let i = a; i < b; i++) e += x[i] * x[i]; return Math.sqrt(e / (b - a)); }
 function micTick(){
   const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
   if (!micAn) return;
-  if (!playing){ micCand = null; micCnt = 0; micLast = null; $('micInfo').textContent = 'microfone ligado'; return; }
+  if (!playing){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
   micAn.getFloatTimeDomainData(micBuf);
-  /* portão de ataque: só conta quando o volume sobe bem acima do ruído de fundo da sala, que é acompanhado nos momentos quietos */
-  let e = 0; for (let i = 0; i < micBuf.length; i++) e += micBuf[i] * micBuf[i];
-  const rn = Math.sqrt(e / micBuf.length);
-  const loud = rn > Math.max(0.003, micFloor * 4);
-  if (!loud) micFloor = micFloor * 0.9 + rn * 0.1;
-  const muted = performance.now() < micMuteUntil;
-  const r = loud && !muted ? yin(micBuf, ctx.sampleRate) : null;
-  const db = micRms > 0 ? Math.round(20 * Math.log10(micRms)) : -120;
-  if (muted){ micCand = null; micCnt = 0; $('micInfo').textContent = 'o app está tocando; ouvindo de novo em instantes'; return; }
-  if (!r){
-    micCand = null; micCnt = 0; if (++micSilent >= 3) micLast = null;
-    $('micInfo').textContent = 'entrada ' + db + ' dB · sem nota clara';
+  const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 3072, N - 1024);
+  const db = recent > 0 ? Math.round(20 * Math.log10(recent)) : -120;
+  const quiet = Math.max(0.003, micFloor * 4);
+  if (recent <= quiet) micFloor = micFloor * 0.9 + recent * 0.1;
+  if (performance.now() < micMuteUntil){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'o app está tocando; ouvindo de novo em instantes'; return; }
+  if (micPhase === 'idle'){
+    if (recent > quiet && recent > older * 2.5){ micPhase = 'pending'; micTicks = 0; micPeak = recent; }
+    else { $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return; }
+  }
+  micPeak = Math.max(micPeak, recent);
+  if (micPhase === 'pending'){
+    if (++micTicks < 2){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
+    const r = yin(micBuf.subarray(N - 3072), ctx.sampleRate);
+    if (r && r.conf >= 0.85){
+      const m = Math.round(69 + 12 * Math.log2(r.f / 440));
+      $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + r.f.toFixed(1) + ' Hz (confiança ' + Math.round(r.conf * 100) + '%)';
+      micPhase = 'hold'; micTicks = 0;
+      micNote(m);
+      return;
+    }
+    if (++micTicks >= 4){ micPhase = 'hold'; micTicks = 0; $('micInfo').textContent = 'ataque sem nota clara'; }
     return;
   }
-  micSilent = 0;
-  const m = Math.round(69 + 12 * Math.log2(r.f / 440));
-  $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + r.f.toFixed(1) + ' Hz (confiança ' + Math.round(r.conf * 100) + '%)';
-  if (m !== micCand){ micCand = m; micCnt = 1; return; }
-  if (++micCnt === 3 && m !== micLast){ micLast = m; micNote(m); }
+  /* espera o som cair (12 dB abaixo do pico) por 3 quadros antes de aceitar outra nota */
+  if (recent < micPeak * 0.25){ if (++micTicks >= 3){ micPhase = 'idle'; micTicks = 0; micPeak = 0; } }
+  else micTicks = 0;
+  $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando a nota cair';
 }
 
 /* ---------- lógica do jogo ---------- */
@@ -601,6 +622,7 @@ function start(){
   const ps = positionsIn(g.startMidi);
   g.startPos = ps[Math.floor(Math.random() * ps.length)];
   g.targets = computeTargets();
+  armTimer();
   if (cfg.chord) playChord(a0, 0.1);
   enterStage();
   renderAll();
@@ -642,14 +664,37 @@ function correct(s, f, midi){
   focusFret(f, false);
   g.count++;
   g.flash = null;
+  g.streak++; if (g.streak > bestStreak){ bestStreak = g.streak; try { localStorage.setItem('elo-best', String(bestStreak)); } catch (e) {} }
   if (g.count >= needNotes()){
     if (cfg.laps && g.lap >= cfg.laps && g.arpIdx === g.arps.length - 1){ finish(); return; }
     beginTransition();
   } else {
     g.targets = computeTargets();
   }
+  armTimer();
   renderAll();
 }
+/* Tempo por nota: a contagem começa quando a nota aparece (depois da troca); se estourar, a sequência zera e a nota fica */
+let bestStreak = 0;
+try { bestStreak = +localStorage.getItem('elo-best') || 0; } catch (e) {}
+function armTimer(){
+  g.deadline = cfg.timerOn && g.phase === 'play' ? Math.max(performance.now(), g.breathUntil || 0) + cfg.timerSec * 1000 : null;
+}
+function timerTick(){
+  const bar = $('noteBar');
+  if (appMode !== 'game' || g.phase !== 'play' || !cfg.timerOn || !g.deadline){ bar.classList.remove('show'); return; }
+  const now = performance.now(), total = cfg.timerSec * 1000;
+  if (now < g.breathUntil){ bar.classList.add('show'); bar.firstElementChild.style.width = '100%'; return; }
+  const left = g.deadline - now;
+  if (left <= 0){
+    g.streak = 0; armTimer();
+    flash('Tempo esgotado: a sequência zerou.', true, 1600);
+    renderStats();
+    return;
+  }
+  bar.classList.add('show'); bar.firstElementChild.style.width = (left / total * 100).toFixed(1) + '%';
+}
+setInterval(timerTick, 100);
 function beginTransition(){
   g.arpIdx = (g.arpIdx + 1) % g.arps.length;
   if (g.arpIdx === 0){ g.lap++; g.needs = g.arps.map(rollNotes); }
@@ -663,7 +708,7 @@ function beginTransition(){
   if (cfg.breath) setTimeout(renderAll, cfg.breath + 20);
 }
 function wrong(s, f, midi){
-  g.errors++;
+  g.errors++; if (cfg.errBreaks) g.streak = 0;
   userNote(midi, { gain:0.45, t60:0.14 });
   missFx(s, f);
   const arp = g.arps[g.arpIdx];
@@ -878,6 +923,11 @@ function renderSettings(){
   $('winHi').innerHTML = opts(4, FRETS, cfg.hi);
   $('winHint').textContent = 'Só valem as casas dentro da região, incluindo as bordas. A nota inicial também sai dela.';
   $('notesRange').style.display = cfg.notesRnd ? '' : 'none';
+  seg('sTimerOn', [{v:false,t:'Desligado'},{v:true,t:'Ligado'}], () => cfg.timerOn, v => { cfg.timerOn = v; saveBoard(); changed(); });
+  seg('sErrBreaks', [{v:true,t:'Sim'},{v:false,t:'Não'}], () => cfg.errBreaks, v => { cfg.errBreaks = v; saveBoard(); renderSettings(); });
+  $('timerSec').value = cfg.timerSec;
+  $('timerVal').textContent = cfg.timerSec.toFixed(1).replace('.', ',') + ' s';
+  $('timerRange').style.display = cfg.timerOn ? '' : 'none';
   $('nMin').innerHTML = opts(2, 8, cfg.notesMin);
   $('nMax').innerHTML = opts(2, 8, cfg.notesMax);
   $('notesHint').textContent = cfg.notesRnd ? `Cada arpejo sorteia entre ${cfg.notesMin} e ${cfg.notesMax} notas, e o sorteio muda a cada volta.` : '';
@@ -972,6 +1022,7 @@ function renderStats(){
   $('lblLap').textContent = 'Volta'; $('lblNotes').textContent = 'Notas'; $('lblErr').textContent = 'Erros'; $('lblClock').textContent = 'Tempo';
   $('stLap').textContent = g.phase === 'idle' ? '–' : (cfg.laps ? `${Math.min(g.lap, cfg.laps)}/${cfg.laps}` : g.lap);
   $('stNotes').textContent = g.path.length;
+  $('stStreak').textContent = g.streak; $('stBest').textContent = bestStreak;
   $('stErr').textContent = g.errors;
   const end = g.t1 || performance.now();
   $('stClock').textContent = g.t0 ? fmt(end - g.t0) : '0:00';
@@ -1023,6 +1074,7 @@ $('sStrings').onclick = e => {
   if (!on && cfg.strings.filter(Boolean).length <= 2){ flash('Deixe pelo menos 2 cordas ligadas.', false, 1400); return; }
   cfg.strings[s] = on; saveBoard(); buildBoard(); renderSettings(); changed();
 };
+$('timerSec').oninput = e => { cfg.timerSec = +e.target.value; $('timerVal').textContent = cfg.timerSec.toFixed(1).replace('.', ',') + ' s'; saveBoard(); if (g.phase === 'play') armTimer(); };
 $('nMin').onchange = e => { cfg.notesMin = +e.target.value; if (cfg.notesMin > cfg.notesMax) cfg.notesMax = cfg.notesMin; changed(); renderSettings(); };
 $('nMax').onchange = e => { cfg.notesMax = +e.target.value; if (cfg.notesMax < cfg.notesMin) cfg.notesMin = cfg.notesMax; changed(); renderSettings(); };
 function setWin(lo, hi, moved){
