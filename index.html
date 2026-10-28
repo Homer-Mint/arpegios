@@ -547,7 +547,7 @@ async function startMic(){
   /* o Safari não processa o analisador se ele não chega ao destino: liga por um ganho mudo */
   const sink = ctx.createGain(); sink.gain.value = 0; micAn.connect(sink); sink.connect(ctx.destination);
   micBuf = new Float32Array(micAn.fftSize);
-  micTimer = setInterval(micTick, 30);
+  micTimer = setInterval(micTick, 10);
   $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
 }
 function stopMic(){
@@ -563,42 +563,39 @@ function micNote(m){
   micLastF = p.f;
   onPick(p.s, p.f);
 }
-/* Detecção por ataque: a nota conta quando o volume dispara de repente; a altura é lida 60 ms depois e conta uma vez.
-   Até o som cair de novo, nada mais é lido, então a cauda da nota e o ruído não viram nota errada. */
-let micPhase = 'idle', micTicks = 0, micPeak = 0;
+/* Detecção por ataque: um ataque (o volume sobe de repente em 10 ms) abre a leitura.
+   A altura é tentada a cada quadro, por até ~270 ms, e a nota conta uma vez. Um ataque novo pode começar a qualquer
+   momento: a cauda de uma nota não sobe de volume, então não dispara. */
+let micPhase = 'idle', micTicks = 0, micHoldUntil = 0, micRise = 0;
 function micRmsOf(x, a, b){ let e = 0; for (let i = a; i < b; i++) e += x[i] * x[i]; return Math.sqrt(e / (b - a)); }
 function micTick(){
   const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
   if (!micAn) return;
   if (!playing){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
   micAn.getFloatTimeDomainData(micBuf);
-  const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 3072, N - 1024);
+  const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 2048, N - 1024);
   const db = recent > 0 ? Math.round(20 * Math.log10(recent)) : -120;
-  const quiet = Math.max(0.003, micFloor * 4);
+  const quiet = Math.max(0.002, micFloor * 4);
   if (recent <= quiet) micFloor = micFloor * 0.9 + recent * 0.1;
   if (performance.now() < micMuteUntil){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'o app está tocando; ouvindo de novo em instantes'; return; }
+  const now = performance.now();
   if (micPhase === 'idle'){
-    if (recent > quiet && recent > older * 2.5){ micPhase = 'pending'; micTicks = 0; micPeak = recent; }
+    micRise = recent > quiet && recent > older * 1.4 ? micRise + 1 : 0;
+    if (micRise >= 2 && now > micHoldUntil){ micPhase = 'reading'; micTicks = 0; micRise = 0; }
     else { $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return; }
   }
-  micPeak = Math.max(micPeak, recent);
-  if (micPhase === 'pending'){
-    if (++micTicks < 2){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
-    const r = yin(micBuf.subarray(N - 3072), ctx.sampleRate);
-    if (r && r.conf >= 0.85){
-      const m = Math.round(69 + 12 * Math.log2(r.f / 440));
-      $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + r.f.toFixed(1) + ' Hz (confiança ' + Math.round(r.conf * 100) + '%)';
-      micPhase = 'hold'; micTicks = 0;
-      micNote(m);
-      return;
-    }
-    if (++micTicks >= 4){ micPhase = 'hold'; micTicks = 0; $('micInfo').textContent = 'ataque sem nota clara'; }
+  micTicks++;
+  if (micTicks < 3){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
+  const r = yin(micBuf.subarray(N - 3072), ctx.sampleRate);
+  if (r && r.conf >= 0.8){
+    const m = Math.round(69 + 12 * Math.log2(r.f / 440));
+    $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + r.f.toFixed(1) + ' Hz (confiança ' + Math.round(r.conf * 100) + '%)';
+    micPhase = 'idle'; micTicks = 0; micHoldUntil = now + 120;
+    micNote(m);
     return;
   }
-  /* espera o som cair (12 dB abaixo do pico) por 3 quadros antes de aceitar outra nota */
-  if (recent < micPeak * 0.25){ if (++micTicks >= 3){ micPhase = 'idle'; micTicks = 0; micPeak = 0; } }
-  else micTicks = 0;
-  $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando a nota cair';
+  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micHoldUntil = now + 120; $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
+  $('micInfo').textContent = 'lendo a nota… entrada ' + db + ' dB';
 }
 
 /* ---------- lógica do jogo ---------- */
