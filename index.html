@@ -39,7 +39,7 @@ header p{margin:0; color:var(--muted); max-width:62ch}
 .seg button{flex:none; border:0; border-right:1px solid var(--line); background:transparent; color:var(--fg); font:inherit; font-size:14px; padding:6px 11px; min-width:36px; cursor:pointer; font-variant-numeric:tabular-nums}
 .seg button:last-child{border-right:0}
 .seg button[aria-pressed="true"]{background:var(--fg); color:var(--bg)}
-select{font:inherit; font-size:14px; color:var(--fg); background:var(--raise); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:100%}
+select, input[type=number]{font:inherit; font-size:14px; color:var(--fg); background:var(--raise); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:100%}
 .row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
 .check{display:flex; align-items:center; gap:8px; font-size:14px}
 input[type=range]{width:140px; accent-color:var(--accent)}
@@ -189,7 +189,7 @@ body.oct #hintBtn{display:none}
     <div class="field"><span class="lbl">Acorde 1 (mesmo arpejo)</span><div class="pick"><select id="d1Root" aria-label="Fundamental do acorde 1"></select><select id="d1Type" aria-label="Tipo do acorde 1"></select></div></div>
     <div class="field"><span class="lbl">Acorde 2 (próximo arpejo)</span><div class="pick"><select id="d2Root" aria-label="Fundamental do acorde 2"></select><select id="d2Type" aria-label="Tipo do acorde 2"></select></div></div>
     <div class="field"><span class="lbl">Nota de partida (do acorde 1)</span><div class="chips" id="dNotes"></div><span class="hint-txt" id="dNoteHint"></span></div>
-    <div class="field oct-only"><span class="lbl">Repetições</span><div class="seg" id="oReps"></div><span class="hint-txt">Quantas vezes passar por todas as posições da nota.</span></div>
+    <div class="field oct-only"><span class="lbl">Repetições</span><input type="number" id="oReps" min="1" max="99" step="1" inputmode="numeric" aria-label="Número de repetições" style="width:6em"><span class="hint-txt">Quantas vezes passar por todas as posições da nota.</span></div>
     <div class="field oct-only"><span class="lbl">Sentido da troca</span><div class="seg" id="oDir"></div><span class="hint-txt">Frente: para a nota mais aguda do acorde 2. Trás: mais grave.</span></div>
   </section>
   <section style="display:grid;gap:10px" aria-label="Sequência">
@@ -205,7 +205,7 @@ body.oct #hintBtn{display:none}
       <div id="micInfo" class="hint-txt" hidden></div>
       <div id="micLogBox" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:#1d110b;color:#f4e9d8;padding:6px 10px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;font:12px system-ui,sans-serif">
-          <span>log do microfone</span><span style="display:flex;gap:6px"><button id="micCalBtn" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">calibrar com Lá solto</button><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button></span>
+          <span>log do microfone</span><span style="display:flex;gap:6px"><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button></span>
         </div>
         <pre id="micLogText" style="margin:0;max-height:28vh;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap"></pre>
       </div>
@@ -284,7 +284,7 @@ const KEYS  = [[0,0],[4,0],[1,0],[5,0],[2,0],[6,0],[3,1],[1,-1],[5,-1],[2,-1],[6
 /* Sílabas Kodály (dó móvel), com cromatismos pela grafia */
 const SYL = ['do','re','mi','fa','so','la','ti'];
 const UP  = ['di','ri',null,'fi','si','li',null];
-const DN  = [null,'ra','me',null,'se','le','te'];
+const DN  = ['de','ra','me','fe','se','le','te'];   /* dó♭ = de, fá♭ = fe */
 const CHR = ['do','di','re','me','mi','fa','fi','so','si','la','te','ti'];
 function syllable(t, ref){
   const d = (t.L - ref.L + 7) % 7, semis = (((t.pc - ref.pc) % 12) + 12) % 12, alt = norm(semis - NAT[d]);
@@ -301,13 +301,12 @@ function sylFor(t, arp){
   return syllable(t, cfg.doMode === 'key' ? keyRef() : arp.rootRef);
 }
 
-/* Dó fixo: a sílaba segue a grafia da nota, mas se a grafia cai numa nota natural de mesma altura (E# = fá, B# = dó, Fb = mi, Cb = si) usa o nome dessa nota */
+/* Dó fixo: a sílaba segue a grafia da nota (Cb = de, Fb = fe); só mi♯ e si♯, que não têm sílaba própria, viram fá e dó */
 function fixSyl(t){
   const d = t.L, acc = t.acc;
   if (acc === 0) return FIX[d];
   if (acc === 1 && UP[d]) return UP[d];
   if (acc === -1 && DN[d]) return DN[d];
-  if (acc === -1 && d === 0) return 'ti';   /* Cb = dó bemol = ti (não é o si da nota B) */
   const semis = (((NAT[d] + acc) % 12) + 12) % 12, e = NAT.indexOf(semis);
   if (e >= 0) return FIX[e];
   return FIX[d] + (ACC[acc] ?? '');
@@ -428,7 +427,7 @@ function pluckBuffer(midi, t60){
 /* Voz cantada: dente de serra com vibrato, filtrada nas vogais (formantes); a altura é exata */
 const VOICE = {
   do:['d','o'], di:['d','I'], re:['r','e'], ri:['r','I'], ra:['r','A'], me:['m','E'], mi:['m','i'],
-  fa:['f','a'], fi:['f','I'], so:['s','o'], sol:['s','o'], se:['s','E'], la:['l','a'], li:['l','I'], le:['l','E'],
+  fa:['f','a'], fi:['f','I'], so:['s','o'], sol:['s','o'], se:['s','E'], la:['l','a'], li:['l','I'], le:['l','E'], de:['d','E'], fe:['f','E'],
   si:['s','i'], ti:['t','i'], te:['t','E']
 };
 const VOWEL = { a:[730,1090,2440], e:[530,1840,2480], i:[270,2290,3010], o:[570,840,2410], E:[400,2100,2800], I:[400,1950,2600], A:[620,1200,2500] };
@@ -506,7 +505,7 @@ function sing(midi, syl, { gain = 0.5, delay = 0, t60 = 2 } = {}){
 function playNote(midi, { gain = 0.7, delay = 0, t60 = 3.2, syl = null } = {}){
   if (!ctx) return;
   /* no modo microfone, o som do app não pode ser ouvido de volta como nota do instrumento */
-  if (cfg.input === 'mic') micMuteUntil = performance.now() + 300 + delay * 1000;
+  if (cfg.input === 'mic'){ const u = performance.now() + 150 + delay * 1000; if (u > micEchoUntil) micEchoUntil = u; micEchoPcs.add(midi); micEchoPcs.add(48 + (((midi - 48) % 12) + 12) % 12); }
   if (cfg.voice && syl){ sing(midi, syl, { gain, delay, t60 }); return; }
   const { buf, rate } = pluckBuffer(midi, t60);
   const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
@@ -523,7 +522,7 @@ function playChord(arp, delay = 0){
 }
 
 /* Microfone: detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima */
-let micRms = 0, micFloor = 0.001, micMuteUntil = 0;
+let micRms = 0, micFloor = 0.001, micEchoUntil = 0, micEchoPcs = new Set();
 function yin(x, sr){
   const W = 1536, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
   let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
@@ -541,8 +540,8 @@ function yin(x, sr){
   const shift = den ? (a - c) / den : 0;
   return { f: sr / (tau + shift), conf: 1 - b };
 }
-let yinBest = 0, micCtx = null, micCal = 0, micCalMode = false, micCalF = [];
-try { micCal = +localStorage.getItem('elo-micCal') || 0; } catch (e) {}
+let yinBest = 0, micCtx = null, micCurM = null, micChgM = null, micChgN = 0;
+try { localStorage.removeItem('elo-micCal'); } catch (e) {}
 let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = null, micCnt = 0, micLast = null, micSilent = 0, micLastF = null;
 async function startMic(){
   ensureAudio();
@@ -569,7 +568,6 @@ async function startMic(){
   $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
   const tr = micStream.getAudioTracks()[0];
   micLog('microfone ligado: ' + (tr ? tr.label : '?') + ' · dispositivo a ' + (st.sampleRate || '?') + ' Hz · análise a ' + micCtx.sampleRate + ' Hz · som do app a ' + ctx.sampleRate + ' Hz');
-  micLog('correção de afinação atual: ' + (micCal >= 0 ? '+' : '') + micCal.toFixed(0) + ' cents');
 }
 function stopMic(){
   if (micTimer) clearInterval(micTimer);
@@ -593,34 +591,24 @@ function micLogCopy(){
 }
 document.getElementById('micLogCopy').onclick = micLogCopy;
 document.body.appendChild(document.getElementById('micLogBox'));
-/* Calibração: toca-se a 5ª corda solta (Lá, 110 Hz) três vezes; a diferença média vira a correção em cents */
-document.getElementById('micCalBtn').onclick = async () => {
-  if (!micStream) await startMic();
-  if (!micStream) return;
-  micCalMode = true; micCalF = []; micCal = 0; micPhase = 'idle';
-  micLog('CALIBRAÇÃO: toque a 5ª corda solta (Lá) três vezes, com uma pausa entre elas');
-  flash('Calibrando: toque o Lá solto (5ª corda) três vezes.', false, 4000);
-};
-function calibrateWith(f){
-  micCalF.push(f);
-  micLog('calibração: ' + micCalF.length + '/3 · ' + f.toFixed(1) + ' Hz');
-  if (micCalF.length < 3) return;
-  const sorted = micCalF.slice().sort((a, b) => a - b), med = sorted[1];
-  let cents = 1200 * Math.log2(med / 110);
-  cents -= 1200 * Math.round(cents / 1200);   /* aceita o Lá em qualquer oitava */
-  micCalMode = false;
-  if (Math.abs(cents) > 300){ micLog('calibração recusada: ' + cents.toFixed(0) + ' cents é longe demais de um Lá'); flash('Calibração recusada: não parecia o Lá solto.', true, 3000); return; }
-  micCal = cents;
-  try { localStorage.setItem('elo-micCal', String(micCal)); } catch (e) {}
-  micLog('calibração feita: correção de ' + (cents >= 0 ? '+' : '') + cents.toFixed(0) + ' cents');
-  flash('Calibrado: ' + (cents >= 0 ? '+' : '') + cents.toFixed(0) + ' cents.', false, 2500);
-}  /* fora do painel do jogo: fica visível em qualquer modo */
 function showMicLog(){
   document.getElementById('micLogBox').style.display = '';
   document.body.style.paddingBottom = '34vh';
 }
+/* janela da altura: só o trecho mais recente (1536 amostras + o maior período), para não misturar a nota anterior */
+const centsOff = f => { const c = Math.round(100 * (12 * Math.log2(f / 440) - Math.round(12 * Math.log2(f / 440)))); return (c >= 0 ? '+' : '') + c + ' cents'; };
+const micWin = () => 1536 + Math.ceil(micCtx.sampleRate / 70) + 2;
+function micEmit(m, msg){
+  micCurM = m; micChgN = 0;
+  if (performance.now() < micEchoUntil && micEchoPcs.has(m)){ micLog('ignorado: parece o som do próprio app (midi ' + m + ')'); return; }
+  micLog(msg);
+  micNote(m);
+}
 function micNote(m){
-  const ps = positionsIn(m);
+  let ps = positionsIn(m);
+  if (!ps.length){
+    for (const d of [-12, 12]) if (positionsIn(m + d).length){ micLog('oitava corrigida: midi ' + m + ' → ' + (m + d)); m += d; ps = positionsIn(m); break; }
+  }
   if (!ps.length){ micLog('fora da região: midi ' + m); flash('Essa nota está fora da região escolhida.', false, 900); return; }
   /* primeira nota do jogo: se a altura bate com a casa sorteada, fica nela */
   const sp = appMode === 'game' && g.phase === 'play' && !g.path.length ? g.startPos : null;
@@ -638,14 +626,14 @@ function micRmsOf(x, a, b){ let e = 0; for (let i = a; i < b; i++) e += x[i] * x
 function micTick(){
   const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
   if (!micAn) return;
-  if (!playing && !micCalMode){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
+  if (!playing){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
   micAn.getFloatTimeDomainData(micBuf);
   const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 2048, N - 1024);
   const db = recent > 0 ? Math.round(20 * Math.log10(recent)) : -120;
   if (++micStatN % 50 === 0) micLog('nível ' + db + ' dB · fase ' + micPhase);
   const quiet = Math.max(0.002, micFloor * 4);
   if (recent <= quiet) micFloor = micFloor * 0.9 + recent * 0.1;
-  if (performance.now() < micMuteUntil){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'o app está tocando; ouvindo de novo em instantes'; return; }
+  if (performance.now() > micEchoUntil) micEchoPcs.clear();
   const now = performance.now();
   if (micPhase === 'idle'){
     micHist.push(recent); if (micHist.length > 25) micHist.shift();
@@ -653,24 +641,37 @@ function micTick(){
     const rising = recent > quiet && recent > older * 1.3 && base !== Infinity && recent > Math.max(base, quiet) * 2;
     micRise = rising ? micRise + 1 : 0;
     if (micRise >= 2 && now > micHoldUntil){ micPhase = 'reading'; micTicks = 0; micRise = 0; micReads = []; micLog('ATAQUE · ' + db + ' dB · base ' + (base > 0 ? Math.round(20 * Math.log10(base)) : -120) + ' dB'); }
-    else { if (micRise === 2) micLog('ataque ignorado: ainda dentro dos 120 ms depois da última nota'); $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return; }
+    else if (micRise === 0 && recent > quiet * 3 && now > micHoldUntil && (micStatN & 1)){
+      /* sem ataque claro: acompanha a altura; se ela muda e fica estável por ~60 ms, é nota nova */
+      const r2 = yin(micBuf.subarray(N - micWin()), micCtx.sampleRate);
+      const m2 = r2 && r2.conf >= 0.9 ? Math.round(69 + 12 * Math.log2(r2.f / 440)) : null;
+      if (m2 == null || m2 === micCurM){ micChgN = 0; }
+      else {
+        micChgN = m2 === micChgM ? micChgN + 1 : 1; micChgM = m2;
+        const jump = micCurM == null ? 0 : Math.abs(m2 - micCurM);
+        if (micChgN >= 3 && jump !== 12 && jump !== 19 && jump !== 24){
+          micChgN = 0; micHoldUntil = now + 60;
+          micEmit(m2, 'NOTA midi ' + m2 + ' · mudança de altura sem ataque (' + r2.f.toFixed(1) + ' Hz)');
+          return;
+        }
+      }
+      $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return;
+    }
+    else { if (micRise === 2) micLog('ataque ignorado: ainda dentro dos 60 ms depois da última nota'); $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return; }
   }
   micTicks++;
   if (micTicks < 3){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
-  const r = yin(micBuf.subarray(N - 3072), micCtx.sampleRate);
-  if (r) r.f *= Math.pow(2, -micCal / 1200);
-  if (r && r.conf >= 0.8){ micReads.push({ m: Math.round(69 + 12 * Math.log2(r.f / 440)), f: r.f, conf: r.conf }); micLog('leitura ' + r.f.toFixed(1) + ' Hz → midi ' + micReads[micReads.length - 1].m + ' · confiança ' + Math.round(r.conf * 100) + '%'); }
+  const r = yin(micBuf.subarray(N - micWin()), micCtx.sampleRate);
+  if (r && r.conf >= 0.8){ micReads.push({ m: Math.round(69 + 12 * Math.log2(r.f / 440)), f: r.f, conf: r.conf }); micLog('leitura ' + r.f.toFixed(1) + ' Hz → midi ' + micReads[micReads.length - 1].m + ' (' + centsOff(r.f) + ') · confiança ' + Math.round(r.conf * 100) + '%'); }
   const last = micReads[micReads.length - 1];
   const support = last ? micReads.filter(x => x.m === last.m).length : 0;
   if (last && (support >= 2 || micTicks >= 9)){
     $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + last.f.toFixed(1) + ' Hz (confiança ' + Math.round(last.conf * 100) + '%)';
-    micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 120;
-    micLog('NOTA midi ' + last.m + ' · ' + support + ' leitura(s) de apoio');
-    if (micCalMode){ calibrateWith(last.f); return; }
-    micNote(last.m);
+    micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 60;
+    micEmit(last.m, 'NOTA midi ' + last.m + ' · ' + support + ' leitura(s) de apoio');
     return;
   }
-  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 120; micLog('sem nota clara após 90 ms · melhor confiança ' + Math.round(yinBest * 100) + '% (precisa 85%)'); $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
+  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 60; micLog('sem nota clara após 90 ms · melhor confiança ' + Math.round(yinBest * 100) + '% (precisa 85%)'); $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
   $('micInfo').textContent = 'lendo a nota… entrada ' + db + ' dB';
 }
 
@@ -980,7 +981,7 @@ function changed(){ if (appMode !== 'game'){ if (dr.phase !== 'idle') drillStop(
 function renderSettings(){
   seg('sInlay', [{v:true,t:'Com bolinhas'},{v:false,t:'Sem bolinhas'}], () => cfg.inlays, v => { cfg.inlays = v; saveBoard(); buildBoard(); renderAll(); });
   seg('sNums', [{v:'all',t:'Todas as casas'},{v:'12',t:'Só a 12'}], () => cfg.fretNums, v => { cfg.fretNums = v; saveBoard(); buildBoard(); renderAll(); });
-  seg('sInput', [{v:'click',t:'Clique'},{v:'mic',t:'Microfone'}], () => cfg.input, v => { cfg.input = v; saveBoard(); if (v === 'click') stopMic(); renderAll(); });
+  seg('sInput', [{v:'click',t:'Clique'},{v:'mic',t:'Microfone'}], () => cfg.input, v => { cfg.input = v; saveBoard(); if (v === 'click') stopMic(); else startMic(); renderAll(); });
   seg('sVoice', [{v:false,t:'Instrumento'},{v:true,t:'Voz'}], () => cfg.voice, v => { cfg.voice = v; saveBoard(); renderAll(); });
   seg('sMode', [{v:'game',t:'Jogo'},{v:'drill',t:'Reforço'},{v:'oct',t:'Oitavas'}], () => appMode, v => setMode(v));
   $('modeHint').textContent = appMode === 'oct' ? 'Oitavas: ordem fixa. Passa por todas as posições da nota do acorde 1, de agudo a grave, e pergunta a troca para o acorde 2.' : appMode === 'drill' ? 'Reforço: escolha dois acordes e uma nota do primeiro; o jogo faz as 4 perguntas e troca a nota.' : 'Jogo: conecte as notas dos arpejos em sequência.';
@@ -1318,7 +1319,7 @@ function drillPick(s, f){
   });
 }
 /* Oitavas: ordem fixa, igual ao Reforço. Para cada posição da nota do acorde 1, de agudo a grave, pergunta a troca para o acorde 2 (frente e/ou trás). Com "Notas a clicar" ≥ 2: clica a referência e depois as notas encadeadas. */
-const oc = { pc:null, reps:1, dirs:'ambas', qs:[], q:0, step:0, needRef:false, done:[] };
+const oc = { pc:null, reps:(() => { try { const v = +localStorage.getItem('elo-oreps'); return v >= 1 && v <= 99 ? Math.round(v) : 1; } catch (e) { return 1; } })(), dirs:'ambas', qs:[], q:0, step:0, needRef:false, done:[] };
 function octBuild(){
   const [a1, a2] = drillArps(), pc = oc.pc, qs = [];
   const sents = oc.dirs === 'frente' ? [1] : oc.dirs === 'tras' ? [-1] : [1, -1];
@@ -1519,7 +1520,15 @@ function renderDrillPanel(){
   $('d1Root').innerHTML = roots(dr.a1); $('d1Type').innerHTML = types(dr.a1);
   $('d2Root').innerHTML = roots(dr.a2); $('d2Type').innerHTML = types(dr.a2);
   renderDrillChips();
-  seg('oReps', [1,2,3,4].map(v => ({ v, t:String(v) })), () => oc.reps, v => { oc.reps = v; drillChanged(); });
+  const oR = $('oReps');
+  if (document.activeElement !== oR) oR.value = oc.reps;
+  oR.onchange = () => {
+    const v = Math.max(1, Math.min(99, Math.round(+oR.value) || 1));
+    oR.value = v;
+    if (v === oc.reps) return;
+    oc.reps = v; try { localStorage.setItem('elo-oreps', String(v)); } catch (e) {}
+    drillChanged();
+  };
   seg('oDir', [{v:'ambas',t:'Frente e trás'},{v:'frente',t:'Só mais aguda'},{v:'tras',t:'Só mais grave'}], () => oc.dirs, v => { oc.dirs = v; drillChanged(); });
 }
 function drillChanged(){
