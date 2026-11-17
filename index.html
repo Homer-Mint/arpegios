@@ -161,7 +161,7 @@ body.oct #hintBtn{display:none}
       <span class="hint-txt">Se a nota não for tocada a tempo, a sequência zera e a nota continua a mesma. Errar também zera a sequência.</span></div>
     <div class="field game-only"><span class="lbl">Erro zera a sequência</span><div class="seg" id="sErrBreaks"></div>
       <span class="hint-txt">Com "Não", o erro conta como erro, mas a sequência continua. Útil no microfone, onde um disparo errado pode acontecer.</span></div>
-    <div class="field"><span class="lbl">Voltas</span><div class="seg" id="sLaps"></div></div>
+    <div class="field"><span class="lbl">Voltas</span><div class="row"><input type="number" id="lapsN" min="1" max="99" step="1" inputmode="numeric" aria-label="Número de voltas" style="width:6em"><label class="check"><input type="checkbox" id="lapsInf"> Sem fim (∞)</label></div></div>
     <div class="field"><span class="lbl">Respiro na troca</span><div class="seg" id="sBreath"></div></div>
     <div class="field">
       <span class="lbl">Progressão e tonalidade</span>
@@ -357,9 +357,10 @@ const playable = m => m >= lowest() && m <= highest() && positionsReach(m).lengt
 const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
 
 /* ---------- estado ---------- */
-const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, timerOn:false, timerSec:4, errBreaks:true, laps:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
+const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, timerOn:false, timerSec:4, errBreaks:true, laps:2, lapsN:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
               chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click', strings:[true,true,true,true,true,true] };
 try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; cfg.timerOn = bv.timerOn === true; cfg.errBreaks = bv.errBreaks !== false; if (typeof bv.timerSec === 'number' && bv.timerSec >= 1 && bv.timerSec <= 10) cfg.timerSec = bv.timerSec; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
+try { const lv = JSON.parse(localStorage.getItem('elo-laps') || 'null'); if (lv && lv.n >= 1 && lv.n <= 99){ cfg.lapsN = Math.round(lv.n); cfg.laps = lv.inf ? 0 : cfg.lapsN; } } catch (e) {}
 function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings, timerOn:cfg.timerOn, timerSec:cfg.timerSec, errBreaks:cfg.errBreaks })); } catch (e) {} }
 let g = newGame();
 /* Notas por arpejo: fixo, ou sorteado dentro da faixa escolhida (um sorteio por arpejo, refeito a cada volta) */
@@ -988,7 +989,18 @@ function renderSettings(){
   seg('sCount', [2,3,4].map(v => ({ v, t:v })), () => cfg.count, v => { setCount(v); changed(); });
   seg('sNotes', [2,3,4,5,6,7,8].map(v => ({ v, t:v })).concat([{ v:'rnd', t:'Aleatório' }]), () => cfg.notesRnd ? 'rnd' : cfg.notes,
     v => { if (v === 'rnd') cfg.notesRnd = true; else { cfg.notesRnd = false; cfg.notes = v; } changed(); });
-  seg('sLaps', [{v:1,t:'1'},{v:2,t:'2'},{v:4,t:'4'},{v:0,t:'∞'}], () => cfg.laps, v => { cfg.laps = v; changed(); });
+  /* Voltas: número livre (1 a 99) ou sem fim; o último número fica guardado */
+  const lN = $('lapsN'), lI = $('lapsInf');
+  if (document.activeElement !== lN) lN.value = cfg.lapsN;
+  lI.checked = cfg.laps === 0; lN.disabled = cfg.laps === 0;
+  const saveLaps = () => { try { localStorage.setItem('elo-laps', JSON.stringify({ n:cfg.lapsN, inf:cfg.laps === 0 })); } catch (e) {} };
+  lN.onchange = () => {
+    const v = Math.max(1, Math.min(99, Math.round(+lN.value) || 1));
+    lN.value = v;
+    if (v === cfg.lapsN) return;
+    cfg.lapsN = v; cfg.laps = v; saveLaps(); changed();
+  };
+  lI.onchange = () => { cfg.laps = lI.checked ? 0 : cfg.lapsN; lN.disabled = lI.checked; saveLaps(); changed(); };
   seg('sBreath', [{v:0,t:'0 s'},{v:800,t:'0,8 s'},{v:1200,t:'1,2 s'},{v:2000,t:'2 s'}], () => cfg.breath, v => { cfg.breath = v; changed(); });
   seg('sDo', [{v:'fixed',t:'Dó fixo'},{v:'key',t:'Móvel (tom)'},{v:'root',t:'Móvel (fund.)'}], () => cfg.doMode, v => { cfg.doMode = v; changed(); });
   seg('sTrail', [{v:'none',t:'Oculto'},{v:'last',t:'Só a última'},{v:'full',t:'Completo'}], () => cfg.trail, v => { cfg.trail = v; renderBoard(); });
