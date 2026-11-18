@@ -205,7 +205,7 @@ body.oct #hintBtn{display:none}
       <div id="micInfo" class="hint-txt" hidden></div>
       <div id="micLogBox" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:#1d110b;color:#f4e9d8;padding:6px 10px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;font:12px system-ui,sans-serif">
-          <span>log do microfone</span><span style="display:flex;gap:6px"><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button></span>
+          <span>log do microfone</span><span style="display:flex;gap:6px"><button id="micViaBtn" type="button" hidden style="font:12px system-ui,sans-serif;padding:3px 10px">usar Web Audio</button><button id="micLogCopy" type="button" style="font:12px system-ui,sans-serif;padding:3px 10px">copiar log</button></span>
         </div>
         <pre id="micLogText" style="margin:0;max-height:28vh;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap"></pre>
       </div>
@@ -391,7 +391,9 @@ let ctx = null, master = null;
 const cache = new Map();
 function ensureAudio(){
   if (!ctx){
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    /* latência mínima no computador: o clique da nota sai junto com o toque */
+    try { ctx = new AC({ latencyHint: mobileView.matches ? 'interactive' : 0 }); } catch (e) { ctx = new AC(); }
     master = ctx.createGain(); master.gain.value = cfg.vol;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 3;
@@ -522,63 +524,612 @@ function playChord(arp, delay = 0){
   ms.forEach((m, i) => playNote(m, { gain:0.26, delay:delay + i * 0.05, t60:2.6 }));
 }
 
-/* Microfone: detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima */
-let micRms = 0, micFloor = 0.001, micEchoUntil = 0, micEchoPcs = new Set();
-function yin(x, sr){
-  const W = 1536, tMin = Math.floor(sr / 1400), tMax = Math.min(Math.ceil(sr / 70), x.length - W - 1);
-  let rms = 0; for (let i = 0; i < W; i++) rms += x[i] * x[i];
-  rms = Math.sqrt(rms / W);
-  micRms = rms;
-  if (rms < 0.0008) return null; /* só silêncio digital; quem separa nota de ruído é o limiar do YIN */
-  const d = new Float32Array(tMax + 1);
-  for (let tau = 1; tau <= tMax; tau++){ let sum = 0; for (let i = 0; i < W; i++){ const df = x[i] - x[i + tau]; sum += df * df; } d[tau] = sum; }
-  const dp = new Float32Array(tMax + 1); dp[0] = 1; let run = 0;
-  for (let tau = 1; tau <= tMax; tau++){ run += d[tau]; dp[tau] = run ? d[tau] * tau / run : 1; }
-  let tau = -1;
-  for (let t = Math.max(1, tMin); t < tMax; t++){ if (dp[t] < 0.15){ while (t + 1 < tMax && dp[t + 1] < dp[t]) t++; tau = t; break; } }
-  if (tau < 1){ let best = 1; for (let t = Math.max(1, tMin); t < tMax; t++) if (dp[t] < best) best = dp[t]; yinBest = 1 - best; return null; }
-  const a = dp[tau - 1], b = dp[tau], c = dp[tau + 1], den = 2 * (a - 2 * b + c);
-  const shift = den ? (a - c) / den : 0;
-  return { f: sr / (tau + shift), conf: 1 - b };
-}
-let yinBest = 0, micCtx = null, micCurM = null, micChgM = null, micChgN = 0;
+/* ---------- Microfone ----------
+   Detecta a nota tocada no instrumento e a trata como um clique na posição mais próxima. */
+let micEchoUntil = 0, micEchoPcs = new Set();
 try { localStorage.removeItem('elo-micCal'); } catch (e) {}
-let micStream = null, micAn = null, micBuf = null, micTimer = null, micCand = null, micCnt = 0, micLast = null, micSilent = 0, micLastF = null;
+/* DETECTOR-INICIO */
+/* Detector de notas do microfone. Recebe blocos contínuos de amostras (push) e trabalha em passos de 128 amostras (~3 ms).
+   - Ataque: a energia de alta frequência (diferença entre amostras vizinhas) ou a energia total salta acima da média
+     dos ~25 ms anteriores.
+   - Altura: MPM (função de diferença quadrada normalizada, calculada por FFT), só com o som depois do ataque. Decide assim
+     que a janela cobre 4 períodos da nota lida ou 2 períodos da nota mais grave possível na região; confirma no passo seguinte.
+   - Cordas que já soavam: os períodos delas são medidos antes do ataque e o som delas é prolongado (previsão periódica)
+     e descontado; fica a leitura mais clara, com ou sem o desconto, então a nota nova é lida mesmo por cima das outras.
+   - Legato: sem ataque, uma altura nova e estável por ~35 ms, a até 5 semitons da anterior, também conta.
+   Eventos: onset, note, fail, ignored, meter. */
+function makeNoteDetector(sr, getRange, onEvent){
+  const H = sr > 60000 ? 256 : 128, RB = 32768, MASK = RB - 1, NH = 64, NMAX = 4096;
+  const rb = new Float32Array(RB);
+  const eHist = new Float64Array(NH), hHist = new Float64Array(NH);
+  const X = new Float32Array(NMAX), Y = new Float32Array(NMAX), Z1 = new Float32Array(NMAX), Z2 = new Float32Array(NMAX);
+  const nsdf = new Float64Array(NMAX), pre = new Float64Array(NMAX + 1);
+  const fre = new Float64Array(2 * NMAX), fim = new Float64Array(2 * NMAX);
+  const keyT = new Int32Array(512), keyV = new Float64Array(512);
+  const PR = new Float64Array(RB);
+  let pEnd = 0, pL = 0, pTerms = [], lastA = -1e9;
+  let w = 0, prev = 0, accE = 0, accH = 0, cnt = 0, hop = 0, dcX = 0, dcY = 0;
+  const dcR = 1 - 2 * Math.PI * 20 / sr;   /* corta o nível contínuo (DC) e o que estiver abaixo de ~20 Hz */
+  let floorE = -1, floorH = -1, quiet = 0, lastOnset = -1e9;
+  let curM = null, curAt = -1e9, peakE = 0, rd = null, trM = null, trN = 0, meterPk = 0, meterN = 0;
+  const at = i => rb[i & MASK];
+  const midiOf = f => Math.round(69 + 12 * Math.log2(f / 440));
+  const dB = v => v > 1e-13 ? Math.round(10 * Math.log10(v)) : -130;
+  function params(){
+    const r = getRange();
+    const fMin = 440 * Math.pow(2, (r.lo - 1 - 69) / 12) * 0.98, fMax = 440 * Math.pow(2, (r.hi + 1 - 69) / 12) * 1.03;
+    const Pmax = Math.min(1300, Math.ceil(sr / fMin)), Pmin = Math.max(2, Math.floor(sr / fMax));
+    return { Pmax, Pmin, Lmin: Math.max(256, 3 * Pmin), Lcap: Math.min(NMAX - 8, 2 * Pmax + 2 * H) };
+  }
+  let P = params();
+
+  /* FFT complexa, raiz 2, no lugar */
+  const fftTab = {};
+  function fft(n, inv){
+    let T = fftTab[n];
+    if (!T){
+      const rev = new Uint32Array(n), cs = new Float64Array(n >> 1), sn = new Float64Array(n >> 1), bits = Math.round(Math.log2(n));
+      for (let i = 0; i < n; i++){ let r = 0, v = i; for (let b = 0; b < bits; b++){ r = (r << 1) | (v & 1); v >>= 1; } rev[i] = r; }
+      for (let i = 0; i < n >> 1; i++){ cs[i] = Math.cos(2 * Math.PI * i / n); sn[i] = -Math.sin(2 * Math.PI * i / n); }
+      T = fftTab[n] = { rev, cs, sn };
+    }
+    const { rev, cs, sn } = T, re = fre, im = fim;
+    for (let i = 0; i < n; i++){ const j = rev[i]; if (j > i){ let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+    for (let size = 2; size <= n; size <<= 1){
+      const half = size >> 1, step = n / size;
+      for (let i = 0; i < n; i += size){
+        for (let j = 0, k = 0; j < half; j++, k += step){
+          const wr = cs[k], wi = inv ? -sn[k] : sn[k], p = i + j, q = p + half;
+          const vr = re[q] * wr - im[q] * wi, vi = re[q] * wi + im[q] * wr;
+          re[q] = re[p] - vr; im[q] = im[p] - vi; re[p] += vr; im[p] += vi;
+        }
+      }
+    }
+  }
+
+  /* MPM: períodos entre Pmin e tauTop; devolve o primeiro pico-chave acima de 92% do maior, com a clareza */
+  function mpm(x, L, Pmin, tauTop, keys){
+    pre[0] = 0;
+    for (let i = 0; i < L; i++) pre[i + 1] = pre[i] + x[i] * x[i];
+    const tot = pre[L];
+    if (!(tot > 1e-12)) return null;
+    const top = Math.min(tauTop + 1, L - 2);
+    let n = 2; while (n < L + top + 1) n <<= 1;
+    for (let i = 0; i < n; i++){ fre[i] = i < L ? x[i] : 0; fim[i] = 0; }
+    fft(n, false);
+    for (let i = 0; i < n; i++){ fre[i] = fre[i] * fre[i] + fim[i] * fim[i]; fim[i] = 0; }
+    fft(n, true);
+    for (let t = 1; t <= top; t++){
+      const m = pre[L - t] + tot - pre[t];
+      nsdf[t] = m > 0 ? 2 * (fre[t] / n) / m : 0;
+    }
+    let t = 1;
+    while (t <= top && nsdf[t] > 0) t++;
+    let hi = 0, nk = 0;
+    while (t <= top){
+      while (t <= top && nsdf[t] <= 0) t++;
+      if (t > top) break;
+      let mt = t;
+      while (t <= top && nsdf[t] > 0){ if (nsdf[t] > nsdf[mt]) mt = t; t++; }
+      if (mt >= top) break;
+      if (mt >= Pmin && mt <= tauTop && nk < 512){ keyT[nk] = mt; keyV[nk] = nsdf[mt]; nk++; if (nsdf[mt] > hi) hi = nsdf[mt]; }
+    }
+    if (!nk || hi <= 0) return null;
+    if (keys) for (let i = 0; i < nk; i++) if (keyV[i] >= 0.3) keys.push(sr / keyT[i]);
+    let k = 0; while (keyV[k] < 0.92 * hi) k++;
+    const T0 = keyT[k], a = nsdf[T0 - 1], b = nsdf[T0], c = nsdf[T0 + 1], den = a - 2 * b + c;
+    const sh = den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den)) : 0;
+    return { T: T0 + sh, c: Math.min(1, b - 0.25 * (a - c) * sh) };
+  }
+  const linOf = (x, m) => { const i = Math.floor(m), f = m - i; return x[i] * (1 - f) + x[i + 1] * f; };
+
+  /* som que continua: amostra global m (pode ser fracionária); antes de pEnd é o sinal real, depois é a previsão */
+  function vAt(i){ return i < pEnd ? at(i) : PR[i - pEnd]; }
+  function vLin(m){ const i = Math.floor(m), f = m - i; return vAt(i) * (1 - f) + vAt(i + 1) * f; }
+  function predAt(n){
+    const i = n - pEnd;
+    if (i < 0) return at(n);
+    if (i >= PR.length) return 0;
+    while (pL <= i){
+      const g = pEnd + pL;
+      let s = 0;
+      for (let j = 1; j < pTerms.length; j++) s -= pTerms[j].c * vLin(g - pTerms[j].d);
+      PR[pL++] = s;
+    }
+    return PR[i];
+  }
+
+  /* períodos das cordas que soavam antes do ataque (até 3), por MPM e cancelamento em pente sucessivo */
+  function ringModel(end, N){
+    for (let i = 0; i < N; i++) Z1[i] = at(end - N + i);
+    let cur = Z1, nxt = Z2, len = N;
+    const comps = [];
+    for (let it = 0; it < 3; it++){
+      const top = Math.min(len >> 1, 2 * P.Pmax);
+      if (top < 2 * P.Pmin) break;
+      const est = mpm(cur, len, P.Pmin, top);
+      if (!est || est.c < 0.6) break;
+      const T = est.T, off = Math.ceil(T) + 1;
+      let num = 0, den = 0;
+      for (let n = off; n < len; n++){ const d = linOf(cur, n - T); num += cur[n] * d; den += d * d; }
+      const g = den > 0 ? Math.min(1, Math.max(0.5, num / den)) : 1;
+      let eN = 0, eC = 0;
+      for (let n = off; n < len; n++){ const v = cur[n] - g * linOf(cur, n - T); nxt[n - off] = v; eN += v * v; eC += cur[n] * cur[n]; }
+      comps.push({ T, g, c:est.c });
+      len -= off; const tmp = cur; cur = nxt; nxt = tmp;
+      if (eN < 0.05 * eC || len < 256) break;
+    }
+    if (!comps.length) return null;
+    /* filtro que anula todas: produto de (1 - g z^-T) */
+    let terms = [{ d:0, c:1 }];
+    for (const { T, g } of comps){
+      const add = terms.map(t => ({ d:t.d + T, c:-g * t.c }));
+      terms = terms.concat(add);
+    }
+    /* confere o modelo nos últimos ~10 ms antes do ataque */
+    const n0 = end - Math.min(Math.round(0.01 * sr), N >> 2);
+    const dmax = terms.reduce((m, t) => Math.max(m, t.d), 0);
+    if (end - N + dmax + 2 > n0) return null;
+    let er = 0, ex = 0;
+    for (let n = n0; n < end; n++){
+      let s = 0;
+      for (const t of terms){ const m = n - t.d, i = Math.floor(m), f = m - i; s += t.c * (at(i) * (1 - f) + at(i + 1) * f); }
+      er += s * s; ex += at(n) * at(n);
+    }
+    if (!(ex > 0) || er > 0.3 * ex) return null;
+    return { terms, comps };
+  }
+
+  /* fluxo espectral (log da magnitude, comparado com o espectro de 2 passos antes): acusa ataques sem estalo
+     e notas novas por cima de cordas que já soam, mesmo quando o volume total quase não sobe */
+  const FW = sr > 60000 ? 2048 : 1024, FWh = FW >> 1;
+  const HW = new Float64Array(FW);
+  for (let i = 0; i < FW; i++) HW[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (FW - 1));
+  const SP = [new Float64Array(FWh + 2), new Float64Array(FWh + 2), new Float64Array(FWh + 2)];
+  const kLo = Math.max(2, Math.round(60 / (sr / FW))), kHi = Math.min(FWh - 2, Math.round(5000 / (sr / FW)));
+  const fHist = new Float64Array(NH);
+  const FMIN = 9;
+  function fluxOf(h){
+    for (let i = 0; i < FW; i++){ fre[i] = at(w - FW + i) * HW[i]; fim[i] = 0; }
+    fft(FW, false);
+    const cur = SP[h % 3], old = SP[(h + 1) % 3];
+    for (let k = kLo - 1; k <= kHi + 1; k++) cur[k] = Math.log(1 + 1000 * Math.sqrt(fre[k] * fre[k] + fim[k] * fim[k]));
+    if (h < 2) return 0;
+    let f = 0;
+    for (let k = kLo; k <= kHi; k++){ const d = cur[k] - Math.max(old[k - 1], old[k], old[k + 1]); if (d > 0) f += d; }
+    return f;
+  }
+
+  function note(m, f, c, kind, lat, sub, pk){
+    curM = m; curAt = w; peakE = pk; trM = null; trN = 0;
+    onEvent({ type:'note', m, f, c, kind, lat, sub, at:w });
+  }
+
+  function begin(h, e, refE, refH, hfOn){
+    if (rd){
+      /* ataque novo no meio de uma leitura: se a anterior já tinha uma leitura firme, ela vale */
+      if (rd.cand != null) note(rd.cand, rd.candF, rd.candC, 'ataque', Math.round((w - rd.a) / sr * 1000), rd.candSub, rd.peak);
+      else onEvent({ type:'fail', best:rd.best, why:'outro ataque antes de ler a nota', at:w });
+      rd = null;
+    }
+    P = params();
+    const h0 = h * H, dLim = 4 * Math.sqrt(refH) + 1e-5;
+    let a = -1;
+    if (hfOn) for (let n = h0 - H + 1; n < h0 + H; n++){ if (Math.abs(at(n) - at(n - 1)) > dLim){ a = n; break; } }
+    if (a < 0){
+      /* sem estalo: maior salto de energia entre quadros de 128 amostras, dentro da janela do fluxo */
+      const F = 128, E = j => { let q = 0; for (let i = 0; i < F; i++){ const v = at(j + i); q += v * v; } return Math.log(q + 1e-12); };
+      let best = -Infinity; a = w - (FW >> 2);
+      for (let j = w - FW - H; j + F <= w; j += 32){ const d = E(j) - E(j - 2 * F); if (d > best){ best = d; a = j; } }
+    }
+    const end = a - 4;
+    const N = Math.min(NMAX - 8, 4 * P.Pmax, end - Math.max(lastA + Math.round(0.006 * sr), w - RB + 8));
+    lastA = a;
+    let ring = null, olds = [];
+    if (N >= 512){
+      let en = 0; for (let i = end - N; i < end; i++) en += at(i) * at(i);
+      if (en / N > floorE * 30){
+        ring = ringModel(end, N);
+        if (ring){
+          pEnd = end; pL = 0; pTerms = ring.terms;
+          olds = ring.comps.map(c => c.T);
+        }
+      }
+    }
+    const ringM = ring && ring.comps[0].T <= P.Pmax * 1.03 && ring.comps[0].c >= 0.8 ? midiOf(sr / ring.comps[0].T) : null;
+    let ep = 0; const Lq = Math.min(N > 0 ? N : 0, 1024); for (let i = end - Lq; i < end; i++) ep += at(i) * at(i);
+    rd = { a, end, hfOn, early:0, earlyM:null, prior: Lq > 256 && ep / Math.max(Lq, 1) > e * 0.03, start:a + Math.round(0.0015 * sr), ring:!!ring, olds, ringM, refE, peak:e, cand:null, candF:0, candC:0, candSub:false, best:0, P };
+    onEvent({ type:'onset', a, db:dB(e), rise:dB(e / Math.max(refE, 1e-13)), ring:ring ? ring.comps.map(c => midiOf(sr / c.T)) : null, at:w });
+  }
+
+  /* Energia nova por nota candidata: espectro depois do ataque menos o de antes (mesmo tamanho de janela), somado
+     nos 10 primeiros harmônicos. Decide entre candidatas parecidas (a nota nova costuma ser harmônico de uma que soava). */
+  const PS = new Float64Array(NMAX), PQ = new Float64Array(NMAX);
+  function spec(s0, L, n, out){
+    for (let i = 0; i < n; i++){ fre[i] = i < L ? at(s0 + i) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (L - 1))) : 0; fim[i] = 0; }
+    fft(n, false);
+    for (let i = 0; i < n >> 1; i++) out[i] = fre[i] * fre[i] + fim[i] * fim[i];
+  }
+  let spN = 0, spBW = 1;
+  const GH = new Float64Array(16);
+  function prepSpec(s0, L, end){
+    let n = 2; while (n < 2 * L) n <<= 1;
+    spec(s0, L, n, PS); spec(end - L, L, n, PQ);
+    spN = n; spBW = sr / n;
+  }
+  const fLimS = () => Math.min(5000, 0.45 * sr);
+  /* ganho de energia (depois - antes) em cada harmônico h = 1..12 da nota m */
+  function gainsM(m){
+    const f = 440 * Math.pow(2, (m - 69) / 12), lim = fLimS();
+    GH.fill(0);
+    for (let h = 1; h <= 12 && h * f < lim; h++){
+      const b = Math.round(h * f / spBW);
+      let best = 0;
+      for (let j = b - 1; j <= b + 1; j++){ const g = PS[j] - PQ[j]; if (g > best) best = g; }
+      GH[h] = best;
+    }
+    return GH;
+  }
+  function newEnough(m, p){
+    const lo = midiOf(sr / p.Pmax), hi = midiOf(sr / p.Pmin);
+    let mx = 0; for (let q = lo; q <= hi; q++){ const v = scoreM(q); if (v > mx) mx = v; }
+    const v = scoreM(m);
+    return v > 0 && v >= 0.15 * mx;
+  }
+  function scoreM(m){ const G = gainsM(m); let sc = 0; for (let h = 1; h <= 10; h++) sc += G[h]; return sc; }
+  function pickNew(cands){
+    let bm = null, bs = -1, s2 = 0, tot = 0;
+    for (let j = 1; j < (spN >> 1) && j * spBW < fLimS(); j++) tot += PS[j];
+    for (const m of cands){ const v = scoreM(m); if (v > bs){ s2 = Math.max(s2, bs); bs = v; bm = m; } else if (v > s2) s2 = v; }
+    return { m:bm, s:bs, s2, tot };
+  }
+  /* nota lida uma oitava (ou 12ª, ou duas oitavas) abaixo da nova: só os harmônicos múltiplos de 2 (ou 3, 4) ganharam energia */
+  function fixSub(m, hi){
+    for (let it = 0; it < 2; it++){
+      const G = gainsM(m);
+      let moved = false;
+      for (const [d, up] of it ? [[2, 12]] : [[2, 12], [3, 19]]){
+        let gm = 0, go = 0;
+        for (let h = 1; h <= 12; h++){ if (h % d === 0) gm += G[h]; else go += G[h]; }
+        if (gm > 0 && go < 0.12 * gm && m + up <= hi){ m += up; moved = true; break; }
+      }
+      if (!moved) break;
+    }
+    return m;
+  }
+
+  /* correlação normalizada do sinal com ele mesmo atrasado de T (fracionário) */
+  function nsdfAt(x, L, T){
+    const t0 = Math.floor(T), fr = T - t0;
+    let r = 0, m = 0;
+    for (let j = 0; j + t0 + 1 < L; j++){ const b = x[j + t0] * (1 - fr) + x[j + t0 + 1] * fr; r += x[j] * b; m += x[j] * x[j] + b * b; }
+    return m > 0 ? 2 * r / m : 0;
+  }
+  function spectralRead(s0, L, end, p, sig){
+    prepSpec(s0, L, end);
+    const lo = midiOf(sr / p.Pmax), hi = midiOf(sr / p.Pmin);
+    let tot = 0;
+    for (let j = 1; j < (spN >> 1) && j * spBW < fLimS(); j++) tot += PS[j];
+    const sc = [];
+    let best = null, bs = 0;
+    for (let m = lo; m <= hi; m++){ const v = scoreM(m); sc[m - lo] = v; if (v > bs){ bs = v; best = m; } }
+    if (best == null || bs < 0.03 * tot) return null;
+    const m1 = fixSub(best, hi);
+    /* outra nota com energia nova parecida (fora vizinhas de 1-2 semitons, que o espectro curto não separa,
+       e das relações de oitava/quinta) deixa a leitura ambígua */
+    let second = 0;
+    for (let m = lo; m <= hi; m++){
+      const dlt = Math.abs(m - m1), d2 = Math.abs(m - best);
+      if (dlt <= 2 || d2 <= 2 || dlt === 12 || dlt === 19 || dlt === 24 || dlt === 7 || dlt === 5) continue;
+      if (sc[m - lo] > second) second = sc[m - lo];
+    }
+    if (bs < 1.8 * second) return null;
+    /* o período exato vem do próprio sinal: maior correlação dentro de ±2 semitons da nota escolhida */
+    const T0 = sr / (440 * Math.pow(2, (m1 - 69) / 12));
+    let bT = T0, bv = -1;
+    for (let k = -48; k <= 48; k++){ const T = T0 * Math.pow(2, k / 288); if (T + 2 >= L / 2 || T < p.Pmin) continue; const v = nsdfAt(sig, L, T); if (v > bv){ bv = v; bT = T; } }
+    const m = midiOf(sr / bT);
+    if (bv < 0.45 || Math.abs(m - m1) > 2) return null;
+    return { m, f: sr / bT, c: bv };
+  }
+
+  /* o período lido é de uma corda que já soava (ou múltiplo dele)? */
+  const isOld = (r, T) => r.olds.some(To => { const q = T / To, k = Math.round(q); return k >= 1 && k <= 3 && Math.abs(q - k) < 0.012 * k; })
+                       || r.olds.some(To => { const q = To / T, k = Math.round(q); return k >= 2 && k <= 3 && Math.abs(q - k) < 0.012 * k; });
+
+  function step(){
+    const r = rd, now = w, p = r.P;
+    if (now - r.a > 0.15 * sr){
+      onEvent({ type:'fail', best:r.best, why:'sem altura clara em 150 ms', at:w });
+      if (r.peak > 1.6 * r.refE) curM = null;
+      rd = null; return;
+    }
+    let L = now - r.start;
+    if (L < p.Lmin) return;
+    let s = r.start;
+    if (L > p.Lcap){ s = now - p.Lcap; L = p.Lcap; }
+    for (let i = 0; i < L; i++) X[i] = at(s + i);
+    const top = Math.min(p.Pmax, L >> 1);
+    const kx = [], ky = [];
+    const ex = mpm(X, L, p.Pmin, top, kx);
+    let est = ex, sub = false, rho = 1, ey = null;
+    if (r.ring){
+      let ey2 = 0, ex2 = 0;
+      for (let i = 0; i < L; i++){
+        const v = X[i] - predAt(s + i);
+        Y[i] = v; ey2 += v * v; ex2 += X[i] * X[i];
+      }
+      rho = ey2 / Math.max(ex2, 1e-14);
+      ey = mpm(Y, L, p.Pmin, top, ky);
+      const exOld = ex && isOld(r, ex.T);
+      if (ey && ey.c >= 0.8 && (!ex || ex.c < 0.8 || exOld || ey.c > ex.c + 0.02)){ est = ey; sub = true; }
+    }
+    if (est && est.c > r.best) r.best = est.c;
+    /* leitura que ainda não cobre 4 períodos, mas se repete igual e clara por 3 passos seguidos: também vale */
+    if (est && est.c >= 0.82 && 3 * est.T <= L){
+      const me = midiOf(sr / est.T);
+      r.early = r.earlyM === me ? r.early + 1 : 1; r.earlyM = me;
+    } else r.early = 0;
+    const early = r.early >= 3;
+    const ok = est && (est.c >= 0.8 && 4 * est.T <= L || est.c >= (r.prior && !r.ring ? 0.8 : 0.7) && top >= p.Pmax || early);
+    if (!ok){
+      /* várias cordas soando e nenhuma leitura clara: com a janela já cheia, lê a nota pela energia nova no espectro
+         (soma de 10 harmônicos de cada nota possível) e confere se o sinal tem mesmo esse período */
+      if (r.prior && (top >= p.Pmax || L >= p.Lcap)){
+        const sr2 = spectralRead(s, L, r.end, p, r.ring ? Y : X);
+        if (sr2){
+          if (r.cand === sr2.m){ rd = null; note(sr2.m, sr2.f, sr2.c, 'ataque', Math.round((now - r.a) / sr * 1000), true, r.peak); return; }
+          r.cand = sr2.m; r.candF = sr2.f; r.candC = sr2.c; r.candSub = true; return;
+        }
+      }
+      r.cand = null; return;
+    }
+    let m = midiOf(sr / est.T), f = sr / est.T;
+    /* havia som antes do ataque e a leitura pode ser dele (ou de um período comum): decide pela energia nova */
+    const mx = ex ? midiOf(sr / ex.T) : null, my = ey ? midiOf(sr / ey.T) : null;
+    if (r.prior){
+      const lo = midiOf(sr / p.Pmax) - 1, hi = midiOf(sr / p.Pmin) + 1;
+      prepSpec(s, L, r.end);
+      const m0 = m;
+      if (isOld(r, est.T) || (mx != null && my != null && mx !== my) || r.olds.length === 0){
+        const set = new Set();
+        const addM = q => { if (q >= lo && q <= hi) set.add(q); };
+        for (const q of [m, mx, my]) if (q != null){ addM(q); addM(q + 12); addM(q + 19); addM(q + 24); }
+        for (const fq of (sub ? ky : kx)) addM(midiOf(fq));
+        const pk = pickNew([...set]);
+        if (pk.m !== m && pk.s > 1.5 * scoreM(m) && pk.s > 0) m = pk.m;
+      }
+      m = fixSub(m, hi);
+      if (m !== m0) f = 440 * Math.pow(2, (m - 69) / 12);
+      /* a nota escolhida precisa explicar parte da energia nova; senão é o som antigo (ou um harmônico dele) */
+      if (!newEnough(m, p)){ r.cand = null; return; }
+    }
+    if (r.cand !== m && !early){ r.cand = m; r.candF = f; r.candC = est.c; r.candSub = sub; return; }
+    rd = null;
+    /* a mesma nota que já soava só conta se houve toque de verdade: volume subiu ou há som novo além da nota antiga */
+    /* mesma nota: precisa do estalo da palheta e de volume novo, ou de bastante som novo além do previsto */
+    if (m === curM && !((r.hfOn && (r.peak >= 1.6 * r.refE || (r.ring && rho > 0.25))) || (r.ring && rho > 0.5))){ onEvent({ type:'ignored', m, why:'mesma nota soando, sem toque novo', at:w }); return; }
+    note(m, f, est.c, 'ataque', Math.round((now - r.a) / sr * 1000), sub, r.peak);
+  }
+
+  function track(e){
+    P = params();
+    const L = Math.min(P.Lcap, 2 * P.Pmax + H);
+    if (w < L) return;
+    for (let i = 0; i < L; i++) X[i] = at(w - L + i);
+    const est = mpm(X, L, P.Pmin, P.Pmax);
+    if (!est || est.c < 0.9){ trN = 0; return; }
+    const m = midiOf(sr / est.T);
+    if (m === curM){ trN = 0; return; }
+    if (m === trM) trN++; else { trM = m; trN = 1; }
+    const jump = curM == null ? 0 : Math.abs(m - curM);
+    /* ligado (martelo, puxada, slide): salto pequeno, nota firme; sem nota anterior, exige ainda mais certeza */
+    const legato = curM != null && jump >= 1 && jump <= 5 && est.c >= 0.93 && trN >= 3 && e >= peakE * 0.03 && w - curAt > 0.12 * sr;
+    const rescue = curM == null && est.c >= 0.95 && trN >= 4 && e > floorE * 100;
+    if (legato || rescue) note(m, sr / est.T, est.c, legato ? 'legato' : 'sem ataque', null, false, e);
+  }
+
+  function onHop(e, hf){
+    const h = hop++;
+    eHist[h % NH] = e; hHist[h % NH] = hf;
+    const fast = h < 700;
+    floorE = floorE < 0 ? e : Math.min(1e-6, e < floorE ? Math.max(e, 1e-13) : floorE * (fast ? 1.01 : 1.0005));
+    floorH = floorH < 0 ? hf : Math.min(2e-6, hf < floorH ? Math.max(hf, 1e-14) : floorH * (fast ? 1.01 : 1.0005));
+    const gE = floorE * 10, gH = floorH * 20;
+    if (e > peakE) peakE = e;
+    if (rd && e > rd.peak) rd.peak = e;
+    if (e > meterPk) meterPk = e;
+    if (++meterN >= 34){ onEvent({ type:'meter', db:dB(meterPk), floor:dB(floorE), at:w }); meterPk = 0; meterN = 0; }
+    if (e > gE) quiet = 0;
+    else if (++quiet === 20){ curM = null; trM = null; trN = 0; }
+    const flux = w >= FW ? fluxOf(h) : 0;
+    fHist[h % NH] = flux;
+    if (h < 24) return;
+    let refH = 0, refE = 0, mF = 0;
+    for (let k = 3; k <= 10; k++){ refH += hHist[(h - k) % NH]; refE += eHist[(h - k) % NH]; }
+    for (let k = 4; k <= 23; k++) mF += fHist[(h - k) % NH];
+    refH /= 8; refE /= 8; mF /= 20;
+    const hfOn = hf > gH && hf > 4 * refH;
+    const fOn = flux > Math.max(3.5 * mF, FMIN);
+    if (h - lastOnset >= 10 && e > gE * 2 && (hfOn || fOn || (e > 6 * refE && hf > 2 * refH))){ lastOnset = h; begin(h, e, refE, refH, hfOn); }
+    if (rd) step();
+    else if (e > gE * 3 && (h & 3) === 0) track(e);
+  }
+
+  function push(x){
+    for (let i = 0; i < x.length; i++){
+      const v = x[i] - dcX + dcR * dcY;
+      dcX = x[i]; dcY = v;
+      rb[w & MASK] = v; w++;
+      const d = v - prev; prev = v;
+      accE += v * v; accH += d * d;
+      if (++cnt === H){ onHop(accE / H, accH / H); accE = 0; accH = 0; cnt = 0; }
+    }
+  }
+  return { push, get rate(){ return sr; }, get samples(){ return w; } };
+}
+/* DETECTOR-FIM */
+
+/* ---------- Microfone: plumbing ----------
+   O áudio chega em blocos contínuos (nenhuma amostra pulada) por um destes caminhos, nesta ordem:
+   1) leitura direta da faixa (MediaStreamTrackProcessor, Chrome/Edge): as amostras cruas da interface, sem a fila
+      e a conversão de taxa do Web Audio;
+   2) AudioWorklet num contexto de baixa latência, na taxa do dispositivo (Safari, Firefox);
+   3) ScriptProcessor, se o worklet não puder ser carregado.
+   O detector (makeNoteDetector) roda aqui e entrega cada nota com o atraso medido desde o ataque. */
+let micStream = null, micDet = null, micCtx = null, micNode = null, micSrc = null, micReader = null, micVia = '', micLastF = null;
+let micMeterLog = 0, micNoteShownAt = 0;
+const MIC_VIA_KEY = 'elo-mic-via';
+const micPlaying = () => appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
+const micRange = () => ({ lo: lowest(), hi: highest() });
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiName = m => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+function micEvent(ev){
+  if (ev.type === 'note'){
+    const line = 'NOTA ' + midiName(ev.m) + ' (midi ' + ev.m + ') · ' + ev.f.toFixed(1) + ' Hz (' + centsOff(ev.f) + ')'
+      + (ev.lat != null ? ' · ' + ev.lat + ' ms depois do ataque' : '')
+      + (ev.kind !== 'ataque' ? ' · ' + ev.kind : '') + (ev.sub ? ' · descontando cordas que soavam' : '');
+    $('micInfo').textContent = 'ouvi ' + midiName(ev.m) + (ev.lat != null ? ' · ' + ev.lat + ' ms' : '');
+    micNoteShownAt = performance.now();
+    if (!micPlaying()){ micLog(line + ' (fora do jogo)'); return; }
+    micEmit(ev.m, line);
+  } else if (ev.type === 'onset'){
+    micLog('ataque · ' + ev.db + ' dB' + (ev.ring && ev.ring.length ? ' · já soavam: ' + ev.ring.map(midiName).join(', ') : ''));
+  } else if (ev.type === 'fail'){
+    micLog('ataque sem nota: ' + ev.why + ' (melhor clareza ' + Math.round((ev.best || 0) * 100) + '%)');
+  } else if (ev.type === 'ignored'){
+    micLog('ignorado: ' + ev.why + ' (' + midiName(ev.m) + ')');
+  } else if (ev.type === 'meter'){
+    const now = performance.now();
+    if (now - micNoteShownAt > 1200) $('micInfo').textContent = 'entrada ' + ev.db + ' dB · leitura ' + micVia;
+    if (now - micMeterLog > (ev.db > ev.floor + 10 ? 1000 : 5000)){ micMeterLog = now; micLog('nível ' + ev.db + ' dB · ruído ' + ev.floor + ' dB'); }
+  }
+}
 async function startMic(){
   ensureAudio();
   showMicLog();
   if (micStream) return;
   micLog('pedindo acesso ao microfone…');
-  try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }); }
-  catch (e) { micLog('erro ao abrir o microfone: ' + (e && e.name)); flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); return; }
-  if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
-  /* A análise roda num contexto próprio, na mesma taxa do dispositivo: assim o navegador não converte a taxa
-     do sinal de entrada (uma conversão errada desloca todas as alturas pelo mesmo fator). */
-  const tr0 = micStream.getAudioTracks()[0], st = tr0 && tr0.getSettings ? tr0.getSettings() : {};
-  micCtx = ctx;
-  if (st.sampleRate && st.sampleRate !== ctx.sampleRate){
-    try { micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: st.sampleRate }); await micCtx.resume(); }
-    catch (e) { micCtx = ctx; micLog('não consegui abrir a análise a ' + st.sampleRate + ' Hz; usando ' + ctx.sampleRate + ' Hz'); }
+  try { micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, latency:0 } }); }
+  catch (e) { micLog('erro ao abrir o microfone: ' + (e && e.name)); flash('Microfone não liberado. Libere o acesso ou escolha Clique.', true, 3000); micStream = null; return; }
+  const tr = micStream.getAudioTracks()[0], st = tr && tr.getSettings ? tr.getSettings() : {};
+  micLog('entrada: ' + (tr ? tr.label : '?') + ' · ' + (st.sampleRate || '?') + ' Hz · ' + (st.channelCount || '?') + ' canal(is)');
+  let via = 'auto';
+  try { via = localStorage.getItem(MIC_VIA_KEY) || 'auto'; } catch (e) {}
+  if (via !== 'audio' && typeof MediaStreamTrackProcessor === 'function'){
+    try { await micDirect(tr); }
+    catch (e){
+      micLog('leitura direta indisponível (' + ((e && e.message) || e) + '); usando Web Audio');
+      if (micReader){ try { micReader.cancel(); } catch (e2) {} }
+      micReader = null; micDet = null;
+    }
   }
-  const src = micCtx.createMediaStreamSource(micStream);
-  micAn = micCtx.createAnalyser(); micAn.fftSize = 4096; src.connect(micAn);
-  /* o Safari não processa o analisador se ele não chega ao destino: liga por um ganho mudo */
-  const sink = micCtx.createGain(); sink.gain.value = 0; micAn.connect(sink); sink.connect(micCtx.destination);
-  micBuf = new Float32Array(micAn.fftSize);
-  micTimer = setInterval(micTick, 10);
-  $('micInfo').hidden = false; $('micInfo').textContent = 'microfone ligado';
-  const tr = micStream.getAudioTracks()[0];
-  micLog('microfone ligado: ' + (tr ? tr.label : '?') + ' · dispositivo a ' + (st.sampleRate || '?') + ' Hz · análise a ' + micCtx.sampleRate + ' Hz · som do app a ' + ctx.sampleRate + ' Hz');
+  if (!micDet && micStream) await micWebAudio(st);
+  $('micInfo').hidden = false;
+  micViaButton();
+}
+/* Chrome/Edge: lê os quadros de áudio da faixa e manda para o detector (mistura os canais, se houver mais de um) */
+async function micDirect(tr){
+  const proc = new MediaStreamTrackProcessor({ track: tr });
+  const reader = proc.readable.getReader();
+  micReader = reader;
+  let timer;
+  const first = await Promise.race([reader.read(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('nenhum áudio em 2 s')), 2000); })]);
+  clearTimeout(timer);
+  if (first.done) throw new Error('fluxo vazio');
+  let buf = null, tmp = null;
+  const feed = ad => {
+    try {
+      const n = ad.numberOfFrames, ch = ad.numberOfChannels;
+      if (!micDet){
+        micDet = makeNoteDetector(ad.sampleRate, micRange, micEvent);
+        micVia = 'direta';
+        micLog('leitura direta da interface (sem Web Audio) · ' + ad.sampleRate + ' Hz · blocos de ' + n + ' amostras');
+      }
+      if (!buf || buf.length !== n){ buf = new Float32Array(n); tmp = new Float32Array(n); }
+      ad.copyTo(buf, { planeIndex:0, format:'f32-planar' });
+      for (let c = 1; c < ch; c++){ ad.copyTo(tmp, { planeIndex:c, format:'f32-planar' }); for (let i = 0; i < n; i++) buf[i] += tmp[i]; }
+      if (ch > 1) for (let i = 0; i < n; i++) buf[i] /= ch;
+      micDet.push(buf);
+    } finally { ad.close(); }
+  };
+  feed(first.value);
+  (async () => {
+    try {
+      for (;;){
+        const { value, done } = await reader.read();
+        if (done || micReader !== reader){ if (value) value.close(); break; }
+        feed(value);
+      }
+    } catch (e) { if (micReader === reader) micLog('leitura direta parou: ' + ((e && e.message) || e)); }
+  })();
+}
+/* Safari/Firefox (ou se a leitura direta falhar): Web Audio de baixa latência na taxa da interface */
+async function micWebAudio(st){
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const opts = { latencyHint: 0 };
+  if (st.sampleRate) opts.sampleRate = st.sampleRate;
+  try { micCtx = new AC(opts); } catch (e) { try { micCtx = new AC({ latencyHint: 0 }); } catch (e2) { micCtx = new AC(); } }
+  try { await micCtx.resume(); } catch (e) {}
+  micSrc = micCtx.createMediaStreamSource(micStream);
+  micDet = makeNoteDetector(micCtx.sampleRate, micRange, micEvent);
+  try {
+    if (!micCtx.audioWorklet || typeof AudioWorkletNode !== 'function') throw new Error('sem AudioWorklet');
+    const code = "class EloTap extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(256);this.n=0;}" +
+      "process(ins){const c=ins[0];if(c&&c.length){const k=c.length,a=c[0];for(let j=0;j<a.length;j++){let v=a[j];for(let q=1;q<k;q++)v+=c[q][j];" +
+      "this.b[this.n++]=v/k;if(this.n===256){this.port.postMessage(this.b,[this.b.buffer]);this.b=new Float32Array(256);this.n=0;}}}return true;}}" +
+      "registerProcessor('elo-tap',EloTap);";
+    const url = URL.createObjectURL(new Blob([code], { type:'application/javascript' }));
+    try { await micCtx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+    micNode = new AudioWorkletNode(micCtx, 'elo-tap', { numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[1] });
+    micNode.port.onmessage = e => { if (micDet) micDet.push(e.data); };
+    micVia = 'Web Audio';
+  } catch (e) {
+    micLog('AudioWorklet indisponível (' + ((e && e.message) || e) + '); usando ScriptProcessor');
+    micNode = micCtx.createScriptProcessor(256, 2, 1);
+    let mix = null;
+    micNode.onaudioprocess = ev => {
+      const ib = ev.inputBuffer, k = ib.numberOfChannels, n = ib.length;
+      ev.outputBuffer.getChannelData(0).fill(0);
+      if (!micDet) return;
+      if (k === 1){ micDet.push(ib.getChannelData(0)); return; }
+      if (!mix || mix.length !== n) mix = new Float32Array(n);
+      mix.fill(0);
+      for (let c = 0; c < k; c++){ const d = ib.getChannelData(c); for (let i = 0; i < n; i++) mix[i] += d[i] / k; }
+      micDet.push(mix);
+    };
+    micVia = 'Web Audio (ScriptProcessor)';
+  }
+  micSrc.connect(micNode); micNode.connect(micCtx.destination);
+  micLog('leitura por ' + micVia + ' · ' + micCtx.sampleRate + ' Hz' + (micCtx.baseLatency ? ' · latência do contexto ' + Math.round(micCtx.baseLatency * 1000) + ' ms' : ''));
 }
 function stopMic(){
-  if (micTimer) clearInterval(micTimer);
+  if (micReader){ const r = micReader; micReader = null; try { r.cancel(); } catch (e) {} }
+  if (micNode){ try { micNode.disconnect(); } catch (e) {} if (micNode.port) micNode.port.onmessage = null; micNode.onaudioprocess = null; micNode = null; }
+  if (micSrc){ try { micSrc.disconnect(); } catch (e) {} micSrc = null; }
+  if (micCtx){ try { micCtx.close(); } catch (e) {} micCtx = null; }
   if (micStream) micStream.getTracks().forEach(t => t.stop());
-  if (micCtx && micCtx !== ctx){ try { micCtx.close(); } catch (e) {} }
-  micCtx = null;
-  micStream = null; micTimer = null; micAn = null; micCand = null; micCnt = 0; micLast = null; micLastF = null; micPhase = 'idle';
+  micStream = null; micDet = null; micLastF = null; micVia = '';
   $('micInfo').hidden = true;
 }
-const micLogLines = []; let micStatN = 0;
+/* botão no painel do log: alterna entre a leitura direta e o Web Audio (para comparar no seu computador) */
+function micViaButton(){
+  const b = document.getElementById('micViaBtn');
+  if (!b) return;
+  if (typeof MediaStreamTrackProcessor !== 'function'){ b.hidden = true; return; }
+  let via = 'auto';
+  try { via = localStorage.getItem(MIC_VIA_KEY) || 'auto'; } catch (e) {}
+  b.hidden = false;
+  b.textContent = via === 'audio' ? 'usar leitura direta' : 'usar Web Audio';
+}
+document.getElementById('micViaBtn').onclick = async () => {
+  let via = 'auto';
+  try { via = localStorage.getItem(MIC_VIA_KEY) || 'auto'; } catch (e) {}
+  try { localStorage.setItem(MIC_VIA_KEY, via === 'audio' ? 'auto' : 'audio'); } catch (e) {}
+  stopMic();
+  await startMic();
+};
+const micLogLines = [];
 function micLog(msg){
   const t = (performance.now() / 1000).toFixed(2);
   micLogLines.push(t + ' ' + msg); if (micLogLines.length > 300) micLogLines.shift();
@@ -596,12 +1147,10 @@ function showMicLog(){
   document.getElementById('micLogBox').style.display = '';
   document.body.style.paddingBottom = '34vh';
 }
-/* janela da altura: só o trecho mais recente (1536 amostras + o maior período), para não misturar a nota anterior */
 const centsOff = f => { const c = Math.round(100 * (12 * Math.log2(f / 440) - Math.round(12 * Math.log2(f / 440)))); return (c >= 0 ? '+' : '') + c + ' cents'; };
-const micWin = () => 1536 + Math.ceil(micCtx.sampleRate / 70) + 2;
+/* nota detectada: descarta o eco do som do próprio app e trata como um clique na posição mais próxima */
 function micEmit(m, msg){
-  micCurM = m; micChgN = 0;
-  if (performance.now() < micEchoUntil && micEchoPcs.has(m)){ micLog('ignorado: parece o som do próprio app (midi ' + m + ')'); return; }
+  if (performance.now() < micEchoUntil && micEchoPcs.has(m)){ micLog('ignorado: parece o som do próprio app (' + midiName(m) + ')'); return; }
   micLog(msg);
   micNote(m);
 }
@@ -617,63 +1166,6 @@ function micNote(m){
   micLastF = p.f;
   micLog('posição: corda ' + (6 - p.s) + ', casa ' + p.f + (appMode === 'game' && g.targets ? ' · esperado midi ' + g.targets.join('/') : ''));
   onPick(p.s, p.f);
-}
-/* Detecção por ataque: um ataque (o volume sobe de repente em 10 ms) abre a leitura.
-   A altura é tentada a cada quadro, por até ~270 ms, e a nota conta uma vez. Um ataque novo pode começar a qualquer
-   momento: a cauda de uma nota não sobe de volume, então não dispara. */
-let micPhase = 'idle', micTicks = 0, micHoldUntil = 0, micRise = 0;
-const micHist = []; let micReads = [];
-function micRmsOf(x, a, b){ let e = 0; for (let i = a; i < b; i++) e += x[i] * x[i]; return Math.sqrt(e / (b - a)); }
-function micTick(){
-  const playing = appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
-  if (!micAn) return;
-  if (!playing){ micPhase = 'idle'; micTicks = 0; $('micInfo').textContent = 'microfone ligado'; return; }
-  micAn.getFloatTimeDomainData(micBuf);
-  const N = micBuf.length, recent = micRmsOf(micBuf, N - 1024, N), older = micRmsOf(micBuf, N - 2048, N - 1024);
-  const db = recent > 0 ? Math.round(20 * Math.log10(recent)) : -120;
-  if (++micStatN % 50 === 0) micLog('nível ' + db + ' dB · fase ' + micPhase);
-  const quiet = Math.max(0.002, micFloor * 4);
-  if (recent <= quiet) micFloor = micFloor * 0.9 + recent * 0.1;
-  if (performance.now() > micEchoUntil) micEchoPcs.clear();
-  const now = performance.now();
-  if (micPhase === 'idle'){
-    micHist.push(recent); if (micHist.length > 25) micHist.shift();
-    let base = Infinity; for (let i = 0; i < micHist.length - 2; i++) if (micHist[i] < base) base = micHist[i];
-    const rising = recent > quiet && recent > older * 1.3 && base !== Infinity && recent > Math.max(base, quiet) * 2;
-    micRise = rising ? micRise + 1 : 0;
-    if (micRise >= 2 && now > micHoldUntil){ micPhase = 'reading'; micTicks = 0; micRise = 0; micReads = []; micLog('ATAQUE · ' + db + ' dB · base ' + (base > 0 ? Math.round(20 * Math.log10(base)) : -120) + ' dB'); }
-    else if (micRise === 0 && recent > quiet * 3 && now > micHoldUntil && (micStatN & 1)){
-      /* sem ataque claro: acompanha a altura; se ela muda e fica estável por ~60 ms, é nota nova */
-      const r2 = yin(micBuf.subarray(N - micWin()), micCtx.sampleRate);
-      const m2 = r2 && r2.conf >= 0.9 ? Math.round(69 + 12 * Math.log2(r2.f / 440)) : null;
-      if (m2 == null || m2 === micCurM){ micChgN = 0; }
-      else {
-        micChgN = m2 === micChgM ? micChgN + 1 : 1; micChgM = m2;
-        const jump = micCurM == null ? 0 : Math.abs(m2 - micCurM);
-        if (micChgN >= 3 && jump !== 12 && jump !== 19 && jump !== 24){
-          micChgN = 0; micHoldUntil = now + 60;
-          micEmit(m2, 'NOTA midi ' + m2 + ' · mudança de altura sem ataque (' + r2.f.toFixed(1) + ' Hz)');
-          return;
-        }
-      }
-      $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return;
-    }
-    else { if (micRise === 2) micLog('ataque ignorado: ainda dentro dos 60 ms depois da última nota'); $('micInfo').textContent = 'entrada ' + db + ' dB · aguardando nota'; return; }
-  }
-  micTicks++;
-  if (micTicks < 3){ $('micInfo').textContent = 'ataque · entrada ' + db + ' dB'; return; }
-  const r = yin(micBuf.subarray(N - micWin()), micCtx.sampleRate);
-  if (r && r.conf >= 0.8){ micReads.push({ m: Math.round(69 + 12 * Math.log2(r.f / 440)), f: r.f, conf: r.conf }); micLog('leitura ' + r.f.toFixed(1) + ' Hz → midi ' + micReads[micReads.length - 1].m + ' (' + centsOff(r.f) + ') · confiança ' + Math.round(r.conf * 100) + '%'); }
-  const last = micReads[micReads.length - 1];
-  const support = last ? micReads.filter(x => x.m === last.m).length : 0;
-  if (last && (support >= 2 || micTicks >= 9)){
-    $('micInfo').textContent = 'entrada ' + db + ' dB · ouvi ' + last.f.toFixed(1) + ' Hz (confiança ' + Math.round(last.conf * 100) + '%)';
-    micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 60;
-    micEmit(last.m, 'NOTA midi ' + last.m + ' · ' + support + ' leitura(s) de apoio');
-    return;
-  }
-  if (micTicks >= 9){ micPhase = 'idle'; micTicks = 0; micReads = []; micHoldUntil = now + 60; micLog('sem nota clara após 90 ms · melhor confiança ' + Math.round(yinBest * 100) + '% (precisa 85%)'); $('micInfo').textContent = 'ataque sem nota clara · entrada ' + db + ' dB'; return; }
-  $('micInfo').textContent = 'lendo a nota… entrada ' + db + ' dB';
 }
 
 /* ---------- lógica do jogo ---------- */
