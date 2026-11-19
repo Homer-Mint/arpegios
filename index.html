@@ -177,7 +177,8 @@ body.oct #hintBtn{display:none}
     <div class="field"><span class="lbl">Braço na tela</span><div class="seg" id="sNut"></div><div class="seg" id="sStr"></div><span class="hint-txt">Guardado separado para celular e computador.</span></div>
     <div class="field"><span class="lbl">Marcas do braço</span><div class="seg" id="sInlay"></div><div class="seg" id="sNums"></div><span class="hint-txt">Bolinhas de casa e números das casas.</span></div>
     <div class="field"><span class="lbl">Ajuda no braço</span><div class="seg" id="sHelp"></div></div>
-    <div class="field"><span class="lbl">Entrada</span><div class="seg" id="sInput"></div><span class="hint-txt">Microfone: o app ouve o seu instrumento. Use fones, senão ele ouve o próprio som.</span></div>
+    <div class="field"><span class="lbl">Entrada</span><div class="seg" id="sInput"></div><span class="hint-txt">Microfone: o app ouve o seu instrumento. Use fones, senão ele ouve o próprio som.</span>
+      <div id="micSensRow" style="display:grid;gap:6px"><span class="lbl">Sensibilidade do microfone</span><div class="seg" id="sMicSens"></div><span class="hint-txt">Baixa ignora sons fracos (corda vibrando sozinha, ruído da sala); alta pega até toques bem leves.</span></div></div>
     <div class="field">
       <span class="lbl">Som</span><div class="seg" id="sVoice"></div>
       <label class="check"><input type="checkbox" id="chordToggle" checked> Tocar o acorde na troca</label>
@@ -357,11 +358,11 @@ const playable = m => m >= lowest() && m <= highest() && positionsReach(m).lengt
 const BOARD_COL = ['#49d1bf','#f4b54d','#f27ea5','#86b4ff'];
 
 /* ---------- estado ---------- */
-const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, timerOn:false, timerSec:4, errBreaks:true, laps:2, lapsN:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
+const cfg = { lo:0, hi:15, trail:'last', count:3, notes:4, notesRnd:false, notesMin:3, notesMax:5, timerOn:false, timerSec:4, errBreaks:true, micSens:-52, laps:2, lapsN:2, breath:1200, help:'none', common:'keep', doMode:'fixed',
               chord:true, keyIdx:0, preset:'251', vol:0.8, slots:[], inlays:true, fretNums:'all', voice:false, input:'click', strings:[true,true,true,true,true,true] };
-try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; cfg.timerOn = bv.timerOn === true; cfg.errBreaks = bv.errBreaks !== false; if (typeof bv.timerSec === 'number' && bv.timerSec >= 1 && bv.timerSec <= 10) cfg.timerSec = bv.timerSec; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
+try { const bv = JSON.parse(localStorage.getItem('elo-board') || 'null'); if (bv){ cfg.inlays = bv.inlays !== false; cfg.fretNums = bv.fretNums === '12' ? '12' : 'all'; cfg.voice = bv.voice === true; cfg.input = bv.input === 'mic' ? 'mic' : 'click'; cfg.timerOn = bv.timerOn === true; cfg.errBreaks = bv.errBreaks !== false; if ([-62, -52, -42].includes(bv.micSens)) cfg.micSens = bv.micSens; if (typeof bv.timerSec === 'number' && bv.timerSec >= 1 && bv.timerSec <= 10) cfg.timerSec = bv.timerSec; if (Array.isArray(bv.strings) && bv.strings.length === 6 && bv.strings.filter(Boolean).length >= 2) cfg.strings = bv.strings.map(Boolean); } } catch (e) {}
 try { const lv = JSON.parse(localStorage.getItem('elo-laps') || 'null'); if (lv && lv.n >= 1 && lv.n <= 99){ cfg.lapsN = Math.round(lv.n); cfg.laps = lv.inf ? 0 : cfg.lapsN; } } catch (e) {}
-function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings, timerOn:cfg.timerOn, timerSec:cfg.timerSec, errBreaks:cfg.errBreaks })); } catch (e) {} }
+function saveBoard(){ try { localStorage.setItem('elo-board', JSON.stringify({ inlays:cfg.inlays, fretNums:cfg.fretNums, voice:cfg.voice, input:cfg.input, strings:cfg.strings, timerOn:cfg.timerOn, timerSec:cfg.timerSec, errBreaks:cfg.errBreaks, micSens:cfg.micSens })); } catch (e) {} }
 let g = newGame();
 /* Notas por arpejo: fixo, ou sorteado dentro da faixa escolhida (um sorteio por arpejo, refeito a cada volta) */
 const rollNotes = () => cfg.notesRnd ? cfg.notesMin + Math.floor(Math.random() * (cfg.notesMax - cfg.notesMin + 1)) : cfg.notes;
@@ -537,6 +538,8 @@ try { localStorage.removeItem('elo-micCal'); } catch (e) {}
    - Cordas que já soavam: os períodos delas são medidos antes do ataque e o som delas é prolongado (previsão periódica)
      e descontado; fica a leitura mais clara, com ou sem o desconto, então a nota nova é lida mesmo por cima das outras.
    - Legato: sem ataque, uma altura nova e estável por ~35 ms, a até 5 semitons da anterior, também conta.
+   - Filtros: força mínima (sensibilidade escolhida, chiado da entrada e força típica das suas notas); nas notas graves,
+     série harmônica (descarta batidas no tampo); a mesma nota repetida só conta com ataque rápido de verdade.
    Eventos: onset, note, fail, ignored, meter. */
 function makeNoteDetector(sr, getRange, onEvent){
   const H = sr > 60000 ? 256 : 128, RB = 32768, MASK = RB - 1, NH = 64, NMAX = 4096;
@@ -550,7 +553,9 @@ function makeNoteDetector(sr, getRange, onEvent){
   let pEnd = 0, pL = 0, pTerms = [], lastA = -1e9;
   let w = 0, prev = 0, accE = 0, accH = 0, cnt = 0, hop = 0, dcX = 0, dcY = 0;
   const dcR = 1 - 2 * Math.PI * 20 / sr;   /* corta o nível contínuo (DC) e o que estiver abaixo de ~20 Hz */
-  let floorE = -1, floorH = -1, quiet = 0, lastOnset = -1e9;
+  let floorE = 1e-9, floorH = 1e-10, quiet = 0, lastOnset = -1e9;
+  let blkE = Infinity, blkH = Infinity, blkN = 0;
+  const minsE = [], minsH = [], BLK = Math.round(0.5 * sr / (sr > 60000 ? 256 : 128));
   let curM = null, curAt = -1e9, peakE = 0, rd = null, trM = null, trN = 0, meterPk = 0, meterN = 0;
   const at = i => rb[i & MASK];
   const midiOf = f => Math.round(69 + 12 * Math.log2(f / 440));
@@ -559,7 +564,7 @@ function makeNoteDetector(sr, getRange, onEvent){
     const r = getRange();
     const fMin = 440 * Math.pow(2, (r.lo - 1 - 69) / 12) * 0.98, fMax = 440 * Math.pow(2, (r.hi + 1 - 69) / 12) * 1.03;
     const Pmax = Math.min(1300, Math.ceil(sr / fMin)), Pmin = Math.max(2, Math.floor(sr / fMax));
-    return { Pmax, Pmin, Lmin: Math.max(256, 3 * Pmin), Lcap: Math.min(NMAX - 8, 2 * Pmax + 2 * H) };
+    return { Pmax, Pmin, Lmin: Math.max(256, 3 * Pmin), Lcap: Math.min(NMAX - 8, 2 * Pmax + 2 * H), minDb: typeof r.minDb === 'number' ? r.minDb : -52 };
   }
   let P = params();
 
@@ -700,19 +705,54 @@ function makeNoteDetector(sr, getRange, onEvent){
     return f;
   }
 
+  /* Nível mínimo de uma nota (dB): o da sensibilidade escolhida, subindo com o chiado da entrada e com a força
+     típica das suas notas (32 dB abaixo da mediana das últimas 8); nunca acima de -30 dB */
+  const notePk = [];
+  function gateDb(){
+    let g = Math.max(P.minDb, Math.min(dB(floorE) + 20, P.minDb + 15));
+    if (notePk.length >= 3){ const q = notePk.slice().sort((a, b) => a - b); g = Math.max(g, q[q.length >> 1] - 32); }
+    return Math.min(g, -30);
+  }
+  /* nota grave de verdade tem série harmônica (4 ou mais harmônicos a menos de 30 dB do mais forte);
+     batida no tampo ou mão encostando faz só uma ou duas ressonâncias do corpo */
+  let specKey = '';
+  function postSpec(s0, L){
+    const k = s0 + ':' + L;
+    if (specKey === k) return;
+    let n = 2; while (n < 2 * L) n <<= 1;
+    spec(s0, L, n, PS); spN = n; spBW = sr / n; specKey = k;
+  }
+  function richOK(f, s0, L){
+    if (f >= 250) return true;
+    postSpec(s0, L);
+    let mx = 0;
+    for (let h = 1; h <= 8; h++){ const b = Math.round(h * f / spBW); let v = 0; for (let j = b - 1; j <= b + 1; j++) if (PS[j] > v) v = PS[j]; GH[h] = v; if (v > mx) mx = v; }
+    let cnt = 0;
+    for (let h = 1; h <= 8; h++) if (GH[h] >= mx * 1e-3) cnt++;
+    return cnt >= 4;
+  }
+  /* última conferência antes de contar a nota: força mínima e, nas graves, série harmônica */
+  function accept(r, m, f, c, sub, s0, L){
+    const pk = dB(r.peak), gd = gateDb();
+    if (pk < gd){ onEvent({ type:'ignored', m, why:'fraca demais (' + pk + ' dB; mínimo ' + gd + ' dB)', at:w }); return; }
+    if (s0 != null && !richOK(f, s0, L)){ onEvent({ type:'ignored', m, why:'sem série harmônica (batida ou ressonância do corpo)', at:w }); return; }
+    note(m, f, c, 'ataque', Math.round((w - r.a) / sr * 1000), sub, r.peak);
+  }
   function note(m, f, c, kind, lat, sub, pk){
     curM = m; curAt = w; peakE = pk; trM = null; trN = 0;
+    if (kind === 'ataque'){ notePk.push(dB(pk)); if (notePk.length > 8) notePk.shift(); }
     onEvent({ type:'note', m, f, c, kind, lat, sub, at:w });
   }
 
   function begin(h, e, refE, refH, hfOn){
     if (rd){
       /* ataque novo no meio de uma leitura: se a anterior já tinha uma leitura firme, ela vale */
-      if (rd.cand != null) note(rd.cand, rd.candF, rd.candC, 'ataque', Math.round((w - rd.a) / sr * 1000), rd.candSub, rd.peak);
-      else onEvent({ type:'fail', best:rd.best, why:'outro ataque antes de ler a nota', at:w });
-      rd = null;
+      const r0 = rd; rd = null;
+      if (r0.cand != null) accept(r0, r0.cand, r0.candF, r0.candC, r0.candSub, null, 0);
+      else onEvent({ type:'fail', best:r0.best, db:dB(r0.peak), why:'outro ataque antes de ler a nota', at:w });
     }
     P = params();
+    if (dB(e) < gateDb() - 8) return;
     const h0 = h * H, dLim = 4 * Math.sqrt(refH) + 1e-5;
     let a = -1;
     if (hfOn) for (let n = h0 - H + 1; n < h0 + H; n++){ if (Math.abs(at(n) - at(n - 1)) > dLim){ a = n; break; } }
@@ -722,6 +762,9 @@ function makeNoteDetector(sr, getRange, onEvent){
       let best = -Infinity; a = w - (FW >> 2);
       for (let j = w - FW - H; j + F <= w; j += 32){ const d = E(j) - E(j - 2 * F); if (d > best){ best = d; a = j; } }
     }
+    /* ataque de verdade sobe em poucos milissegundos (estalo); batimento entre duas notas sobe devagar */
+    const hfAt = (x0, n) => { let q = 0; for (let i = x0; i < x0 + n; i++){ const d = at(i) - at(i - 1); q += d * d; } return q / n; };
+    const sharp = hfAt(a, Math.round(0.002 * sr)) / Math.max(hfAt(a - Math.round(0.012 * sr), Math.round(0.010 * sr)), 1e-14);
     const end = a - 4;
     const N = Math.min(NMAX - 8, 4 * P.Pmax, end - Math.max(lastA + Math.round(0.006 * sr), w - RB + 8));
     lastA = a;
@@ -738,7 +781,7 @@ function makeNoteDetector(sr, getRange, onEvent){
     }
     const ringM = ring && ring.comps[0].T <= P.Pmax * 1.03 && ring.comps[0].c >= 0.8 ? midiOf(sr / ring.comps[0].T) : null;
     let ep = 0; const Lq = Math.min(N > 0 ? N : 0, 1024); for (let i = end - Lq; i < end; i++) ep += at(i) * at(i);
-    rd = { a, end, hfOn, early:0, earlyM:null, prior: Lq > 256 && ep / Math.max(Lq, 1) > e * 0.03, start:a + Math.round(0.0015 * sr), ring:!!ring, olds, ringM, refE, peak:e, cand:null, candF:0, candC:0, candSub:false, best:0, P };
+    rd = { a, end, hfOn, sharp, early:0, earlyM:null, prior: Lq > 256 && ep / Math.max(Lq, 1) > e * 0.03, start:a + Math.round(0.0015 * sr), ring:!!ring, olds, ringM, refE, peak:e, cand:null, candF:0, candC:0, candSub:false, best:0, P };
     onEvent({ type:'onset', a, db:dB(e), rise:dB(e / Math.max(refE, 1e-13)), ring:ring ? ring.comps.map(c => midiOf(sr / c.T)) : null, at:w });
   }
 
@@ -834,13 +877,17 @@ function makeNoteDetector(sr, getRange, onEvent){
   }
 
   /* o período lido é de uma corda que já soava (ou múltiplo dele)? */
-  const isOld = (r, T) => r.olds.some(To => { const q = T / To, k = Math.round(q); return k >= 1 && k <= 3 && Math.abs(q - k) < 0.012 * k; })
-                       || r.olds.some(To => { const q = To / T, k = Math.round(q); return k >= 2 && k <= 3 && Math.abs(q - k) < 0.012 * k; });
+  const isOld = (r, T) => {
+    const m = midiOf(sr / T);
+    return r.olds.some(To => { const mo = midiOf(sr / To); return m === mo || m === mo + 12 || m === mo + 19 || m === mo - 12 || m === mo - 19; })
+        || r.olds.some(To => { const q = T / To, k = Math.round(q); return k >= 1 && k <= 3 && Math.abs(q - k) < 0.012 * k; })
+        || r.olds.some(To => { const q = To / T, k = Math.round(q); return k >= 2 && k <= 3 && Math.abs(q - k) < 0.012 * k; });
+  };
 
   function step(){
     const r = rd, now = w, p = r.P;
     if (now - r.a > 0.15 * sr){
-      onEvent({ type:'fail', best:r.best, why:'sem altura clara em 150 ms', at:w });
+      onEvent({ type:'fail', best:r.best, db:dB(r.peak), why:'sem altura clara em 150 ms', at:w });
       if (r.peak > 1.6 * r.refE) curM = null;
       rd = null; return;
     }
@@ -878,7 +925,7 @@ function makeNoteDetector(sr, getRange, onEvent){
       if (r.prior && (top >= p.Pmax || L >= p.Lcap)){
         const sr2 = spectralRead(s, L, r.end, p, r.ring ? Y : X);
         if (sr2){
-          if (r.cand === sr2.m){ rd = null; note(sr2.m, sr2.f, sr2.c, 'ataque', Math.round((now - r.a) / sr * 1000), true, r.peak); return; }
+          if (r.cand === sr2.m){ rd = null; accept(r, sr2.m, sr2.f, sr2.c, true, s, L); return; }
           r.cand = sr2.m; r.candF = sr2.f; r.candC = sr2.c; r.candSub = true; return;
         }
       }
@@ -908,8 +955,9 @@ function makeNoteDetector(sr, getRange, onEvent){
     rd = null;
     /* a mesma nota que já soava só conta se houve toque de verdade: volume subiu ou há som novo além da nota antiga */
     /* mesma nota: precisa do estalo da palheta e de volume novo, ou de bastante som novo além do previsto */
-    if (m === curM && !((r.hfOn && (r.peak >= 1.6 * r.refE || (r.ring && rho > 0.25))) || (r.ring && rho > 0.5))){ onEvent({ type:'ignored', m, why:'mesma nota soando, sem toque novo', at:w }); return; }
-    note(m, f, est.c, 'ataque', Math.round((now - r.a) / sr * 1000), sub, r.peak);
+    const soon = w - curAt < 0.15 * sr;
+    if (m === curM && (r.sharp < 6 || (soon ? !(r.hfOn && r.peak >= 2 * r.refE) : !((r.hfOn && (r.peak >= 1.6 * r.refE || (r.ring && rho > 0.25))) || (r.ring && rho > 0.5))))){ onEvent({ type:'ignored', m, why:'mesma nota soando, sem toque novo', at:w }); return; }
+    accept(r, m, f, est.c, sub, s, L);
   }
 
   function track(e){
@@ -924,22 +972,25 @@ function makeNoteDetector(sr, getRange, onEvent){
     if (m === trM) trN++; else { trM = m; trN = 1; }
     const jump = curM == null ? 0 : Math.abs(m - curM);
     /* ligado (martelo, puxada, slide): salto pequeno, nota firme; sem nota anterior, exige ainda mais certeza */
-    const legato = curM != null && jump >= 1 && jump <= 5 && est.c >= 0.93 && trN >= 3 && e >= peakE * 0.03 && w - curAt > 0.12 * sr;
-    const rescue = curM == null && est.c >= 0.95 && trN >= 4 && e > floorE * 100;
-    if (legato || rescue) note(m, sr / est.T, est.c, legato ? 'legato' : 'sem ataque', null, false, e);
+    const legato = curM != null && jump >= 1 && jump <= 5 && est.c >= 0.93 && trN >= 3 && e >= peakE * 0.03 && w - curAt > 0.12 * sr && dB(e) >= gateDb();
+    if (legato) note(m, sr / est.T, est.c, 'legato', null, false, e);
   }
 
   function onHop(e, hf){
     const h = hop++;
     eHist[h % NH] = e; hHist[h % NH] = hf;
-    const fast = h < 700;
-    floorE = floorE < 0 ? e : Math.min(1e-6, e < floorE ? Math.max(e, 1e-13) : floorE * (fast ? 1.01 : 1.0005));
-    floorH = floorH < 0 ? hf : Math.min(2e-6, hf < floorH ? Math.max(hf, 1e-14) : floorH * (fast ? 1.01 : 1.0005));
-    const gE = floorE * 10, gH = floorH * 20;
+    /* chiado de fundo: o menor nível de cada meio segundo, e o menor dos últimos 3 s */
+    if (e < blkE) blkE = e;
+    if (hf < blkH) blkH = hf;
+    if (++blkN >= BLK){ minsE.push(blkE); minsH.push(blkH); if (minsE.length > 6){ minsE.shift(); minsH.shift(); } blkE = blkH = Infinity; blkN = 0; }
+    floorE = Math.min(1e-4, Math.max(1e-13, Math.min(blkE, ...minsE)));
+    floorH = Math.min(1e-4, Math.max(1e-14, Math.min(blkH, ...minsH)));
+    /* para achar ataques, o chiado conta só até -60 dB: com cordas soando o 'fundo' sobe, e isso não pode esconder ataques */
+    const gE = Math.min(floorE, 1e-6) * 10, gH = Math.min(floorH, 2e-6) * 20;
     if (e > peakE) peakE = e;
     if (rd && e > rd.peak) rd.peak = e;
     if (e > meterPk) meterPk = e;
-    if (++meterN >= 34){ onEvent({ type:'meter', db:dB(meterPk), floor:dB(floorE), at:w }); meterPk = 0; meterN = 0; }
+    if (++meterN >= 34){ onEvent({ type:'meter', db:dB(meterPk), floor:dB(floorE), gate:gateDb(), at:w }); meterPk = 0; meterN = 0; }
     if (e > gE) quiet = 0;
     else if (++quiet === 20){ curM = null; trM = null; trN = 0; }
     const flux = w >= FW ? fluxOf(h) : 0;
@@ -981,7 +1032,7 @@ let micStream = null, micDet = null, micCtx = null, micNode = null, micSrc = nul
 let micMeterLog = 0, micNoteShownAt = 0;
 const MIC_VIA_KEY = 'elo-mic-via';
 const micPlaying = () => appMode === 'game' ? g.phase === 'play' : dr.phase === 'play';
-const micRange = () => ({ lo: lowest(), hi: highest() });
+const micRange = () => ({ lo: lowest(), hi: highest(), minDb: cfg.micSens });
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const midiName = m => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
 function micEvent(ev){
@@ -993,16 +1044,14 @@ function micEvent(ev){
     micNoteShownAt = performance.now();
     if (!micPlaying()){ micLog(line + ' (fora do jogo)'); return; }
     micEmit(ev.m, line);
-  } else if (ev.type === 'onset'){
-    micLog('ataque · ' + ev.db + ' dB' + (ev.ring && ev.ring.length ? ' · já soavam: ' + ev.ring.map(midiName).join(', ') : ''));
   } else if (ev.type === 'fail'){
-    micLog('ataque sem nota: ' + ev.why + ' (melhor clareza ' + Math.round((ev.best || 0) * 100) + '%)');
+    micLog('som sem nota definida (' + ev.db + ' dB): ' + ev.why);
   } else if (ev.type === 'ignored'){
     micLog('ignorado: ' + ev.why + ' (' + midiName(ev.m) + ')');
   } else if (ev.type === 'meter'){
     const now = performance.now();
     if (now - micNoteShownAt > 1200) $('micInfo').textContent = 'entrada ' + ev.db + ' dB · leitura ' + micVia;
-    if (now - micMeterLog > (ev.db > ev.floor + 10 ? 1000 : 5000)){ micMeterLog = now; micLog('nível ' + ev.db + ' dB · ruído ' + ev.floor + ' dB'); }
+    if (now - micMeterLog > (ev.db > ev.floor + 10 ? 1000 : 5000)){ micMeterLog = now; micLog('nível ' + ev.db + ' dB · fundo ' + ev.floor + ' dB · nota precisa de ' + ev.gate + ' dB'); }
   }
 }
 async function startMic(){
@@ -1475,6 +1524,8 @@ function renderSettings(){
   seg('sInlay', [{v:true,t:'Com bolinhas'},{v:false,t:'Sem bolinhas'}], () => cfg.inlays, v => { cfg.inlays = v; saveBoard(); buildBoard(); renderAll(); });
   seg('sNums', [{v:'all',t:'Todas as casas'},{v:'12',t:'Só a 12'}], () => cfg.fretNums, v => { cfg.fretNums = v; saveBoard(); buildBoard(); renderAll(); });
   seg('sInput', [{v:'click',t:'Clique'},{v:'mic',t:'Microfone'}], () => cfg.input, v => { cfg.input = v; saveBoard(); if (v === 'click') stopMic(); else startMic(); renderAll(); });
+  seg('sMicSens', [{v:-62,t:'Alta'},{v:-52,t:'Média'},{v:-42,t:'Baixa'}], () => cfg.micSens, v => { cfg.micSens = v; saveBoard(); micLog('sensibilidade: nota precisa de pelo menos ' + v + ' dB'); });
+  $('micSensRow').style.display = cfg.input === 'mic' ? 'grid' : 'none';
   seg('sVoice', [{v:false,t:'Instrumento'},{v:true,t:'Voz'}], () => cfg.voice, v => { cfg.voice = v; saveBoard(); renderAll(); });
   seg('sMode', [{v:'game',t:'Jogo'},{v:'drill',t:'Reforço'},{v:'oct',t:'Oitavas'}], () => appMode, v => setMode(v));
   $('modeHint').textContent = appMode === 'oct' ? 'Oitavas: ordem fixa. Passa por todas as posições da nota do acorde 1, de agudo a grave, e pergunta a troca para o acorde 2.' : appMode === 'drill' ? 'Reforço: escolha dois acordes e uma nota do primeiro; o jogo faz as 4 perguntas e troca a nota.' : 'Jogo: conecte as notas dos arpejos em sequência.';
